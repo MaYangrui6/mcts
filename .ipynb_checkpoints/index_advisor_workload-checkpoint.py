@@ -197,6 +197,7 @@ class IndexAdvisor:
 
     def complex_index_advisor(self, candidate_indexes: List[AdvisedIndex]):
         atomic_config_total = generate_sorted_atomic_config(self.workload.get_queries(), candidate_indexes)
+        logging.info(f'atomic_config_total :{atomic_config_total},len=={len(atomic_config_total)}')
         same_columns_config = generate_atomic_config_containing_same_columns(candidate_indexes)
         for atomic_config in same_columns_config:
             if atomic_config not in atomic_config_total:
@@ -396,7 +397,7 @@ class IndexAdvisor:
         workload_optimized = index.benefit / self.workload.get_total_origin_cost() * 100
         sql_info['workloadOptimized'] = '%.2f' % \
                                         (workload_optimized if workload_optimized > 1 else 1)
-        sql_info['schemaName'] = index.get_table().split('.')[0]
+        sql_info['schemaName'] = 'public'
         sql_info['tbName'] = table_name
         sql_info['columns'] = index.get_columns()
         sql_info['index_type'] = index.get_index_type()
@@ -474,6 +475,8 @@ class IndexAdvisor:
 
     def generate_redundant_useless_indexes(self, history_invalid_indexes):
         created_indexes = fetch_created_indexes(self.executor)
+        logging.info('len of created_indexes :%s',len(created_indexes))
+        logging.info('created_indexes :%s',created_indexes)
         record_history_invalid_indexes(self.integrate_indexes['historyIndexes'], history_invalid_indexes,
                                        created_indexes)
         print_header_boundary(" Created indexes ")
@@ -1078,18 +1081,23 @@ def powerset(iterable):
 def generate_sorted_atomic_config(queries: List[QueryItem],
                                   candidate_indexes: List[AdvisedIndex]) -> List[Tuple[AdvisedIndex, ...]]:
     atomic_config_total = []
-
+    
+    cnt=0
     for query in queries:
+        cnt+=1
+        logging.info(f'cnt num {cnt} queries:{query}')
         if len(query.get_indexes()) == 0:
             continue
 
         indexes = []
         for i, (table, group) in enumerate(groupby(query.get_sorted_indexes(), lambda x: x.get_table())):
+        #它按照每个索引所属的表对索引进行分组。它返回一个可迭代的对象，每个元素都是一个 (key, group) 元组，其中 key 是分组的键（这里是表名），group 是该表的索引组成的迭代器
             # The max number of table is 2.
             if i > 1:
                 break
             # The max index number for each table is 2.
             indexes.extend(list(group)[:2])
+            
         atomic_configs = powerset(indexes)
         for new_config in atomic_configs:
             if new_config not in atomic_config_total:
@@ -1254,6 +1262,7 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
         print_header_boundary(" Determine optimal indexes ")
         with executor.session():
             if multi_iter_mode:
+                logging.info('Mcts started')
                 opt_indexes = index_advisor.complex_index_advisor(candidate_indexes)
             else:
                 opt_indexes = index_advisor.simple_index_advisor(candidate_indexes)

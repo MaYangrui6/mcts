@@ -77,7 +77,7 @@ class UniqueList(list):
 class ExistingIndex:
 
     def __init__(self, schema, table, indexname, columns, indexdef):
-        self.__schema = schema
+        self.__schema = 'public'
         self.__table = table
         self.__indexname = indexname
         self.__columns = columns
@@ -103,7 +103,7 @@ class ExistingIndex:
         return self.__table
 
     def get_schema(self):
-        return self.__schema
+        return 'public'
 
     def get_indexname(self):
         return self.__indexname

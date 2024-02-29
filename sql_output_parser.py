@@ -291,8 +291,6 @@ def get_checked_indexes(index_check_results, tables) -> list:
                         table_name=table_na
                 column_name = btree[btree.find(table_name)+len(table_name)+1:]
                 hypoid_table_column[index_num] = table_name + ':' + column_name
-        logging.info('get_checked_indexes text :%s',text)
         if 'Index' in text and 'Scan' in text and 'btree' in text:
-            logging.info('get_checked_indexes plan select index text:%s',text)
             __add_valid_index(text, hypoid_table_column, valid_indexes)
     return valid_indexes

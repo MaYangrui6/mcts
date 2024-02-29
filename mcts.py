@@ -15,6 +15,7 @@ import sys
 import math
 import random
 import copy
+import logging
 from collections import defaultdict
 try:
     from utils import infer_workload_benefit
@@ -337,6 +338,7 @@ def monte_carlo_tree_search(node):
     """
 
     computation_budget = len(AVAILABLE_CHOICES) * STORAGE_THRESHOLD / TOTAL_STORAGE * 50
+    logging.info('ite_times monte_carlo_tree_search computation_budget :%s',computation_budget)
 
     # Run as much as possible under the computation budget.
     for i in range(int(computation_budget)):
@@ -366,6 +368,7 @@ def MCTS(workload_info, atomic_choices, available_choices, storage_threshold, ma
         else len(available_choices)
     for index in available_choices:
         TOTAL_STORAGE += index.get_storage()
+    logging.info(f'mcts {STORAGE_THRESHOLD} >= {TOTAL_STORAGE}')
     if STORAGE_THRESHOLD >= TOTAL_STORAGE:
         return sorted(available_choices, key=lambda x: x.benefit, reverse=True)[:MAX_INDEX_NUM]
     # Create the initialized state and initialized node.
