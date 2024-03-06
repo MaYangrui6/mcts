@@ -193,10 +193,6 @@ class AdvisedIndex:
         # match <13382>btree_date_dim_d_month_seq
         schema = self.get_schema()
         if schema == 'public':
-            logging.info(f'match_index_name btree_{self.get_index_type() + "_" if self.get_index_type() else ""}'
-                                       f'{self.get_table().split(".")[-1]}_'
-                                       f'{"_".join(self.get_columns().split(COLUMN_DELIMITER))}')
-            logging.info('index_name :%s',index_name[1:-1])
             return index_name[1:-1].endswith(f'btree_{self.get_index_type() + "_" if self.get_index_type() else ""}'
                                        f'{self.get_table().split(".")[-1]}_'
                                        f'{"_".join(self.get_columns().split(COLUMN_DELIMITER))}')
@@ -497,7 +493,7 @@ def infer_workload_benefit(workload: WorkLoad, config: List[AdvisedIndex],
                            atomic_config_total: List[Tuple[AdvisedIndex]]):
     """ Infer the total cost of queries for a config according to the cost of atomic configs. """
     total_benefit = 0
-    atomic_subsets_configs = lookfor_subsets_configs(config, atomic_config_total)
+    atomic_subsets_configs = lookfor_subsets_configs(config, atomic_config_total)   #查找给定配置中的子集---是否在原子配置列表中存在
     is_recorded = [True] * len(atomic_subsets_configs)
     for query in workload.get_queries():
         origin_cost_of_query = workload.get_origin_cost_of_query(query)

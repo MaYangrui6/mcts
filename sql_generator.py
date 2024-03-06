@@ -16,6 +16,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from functools import lru_cache
 
+# from index_advisor_workload import hypopg_btree, hypopg_btree_table
+
 try:
     from .utils import get_placeholders, has_dollar_placeholder, replace_comma_with_dollar, replace_function_comma
 except ImportError:
@@ -100,19 +102,29 @@ def get_hypo_index_head_sqls(is_multi_node):
 
 
 def get_index_check_sqls(query, indexes, is_multi_node):
+    hypopg_btree=dict()
+    hypopg_btree_table=dict()
     sqls = get_hypo_index_head_sqls(is_multi_node)[:]
     for index in indexes:
         table = index.get_table()
         columns = index.get_columns()
+        print('hypopg_create_index table:%s columns :%s'%(table,columns))
         index_type = index.get_index_type()
         sqls.append("SELECT hypopg_create_index('CREATE INDEX ON %s(%s) %s')" %
                     (table, columns, index_type))
+        cols_str='_'.join([x.strip() for x in columns.split(',')])
+        key_index=table.split('.')[-1]+'_'+cols_str
+        value_index=columns
+        value_table=table.split('.')[-1]
+        if key_index not in hypopg_btree:
+            hypopg_btree[key_index]=value_index
+        if key_index not in hypopg_btree_table:
+            hypopg_btree_table[key_index]=value_table
     sqls.append('SELECT hypopg_display_index()')
     # sqls.append("SET explain_perf_mode = 'normal';")
     sqls.extend(get_prepare_sqls(query))
     sqls.append('SELECT hypopg_reset_index()')
-    logging.info('get_index_check_sqls :%s',sqls)
-    return sqls
+    return sqls,hypopg_btree,hypopg_btree_table
 
 
 def get_table_info_sql(table, schema):

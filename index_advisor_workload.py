@@ -36,7 +36,7 @@ try:
     from .sql_output_parser import parse_single_advisor_results, parse_explain_plan, \
         get_checked_indexes, parse_table_sql_results, parse_existing_indexes_results, parse_plan_cost, parse_hypo_index
     from .sql_generator import get_single_advisor_sql, get_index_check_sqls, get_existing_index_sql, \
-        get_workload_cost_sqls, get_index_setting_sqls, get_prepare_sqls, get_hypo_index_head_sqls
+    get_workload_cost_sqls, get_index_setting_sqls, get_prepare_sqls, get_hypo_index_head_sqls
     from .executors.common import BaseExecutor
     from .executors.gsql_executor import GsqlExecutor
     from .mcts import MCTS
@@ -63,8 +63,9 @@ except ImportError:
         replace_comma_with_dollar, replace_function_comma, flatten, ERROR_KEYWORD
     from process_bar import bar_print, ProcessBar
 
+
 SAMPLE_NUM = 5
-MAX_INDEX_COLUMN_NUM = 5
+MAX_INDEX_COLUMN_NUM = 2
 MAX_CANDIDATE_COLUMNS = 40
 MAX_INDEX_NUM = None
 MAX_INDEX_STORAGE = None
@@ -758,16 +759,15 @@ def query_index_check(executor, query, indexes, sort_by_column_no=True):
         # When the cost values are the same, the execution plan picks the last index created.
         # Sort indexes to ensure that short indexes have higher priority.
         indexes = sorted(indexes, key=lambda index: -len(index.get_columns()))
-    logging.info('query_index_check indexes :%s',indexes)
-    index_check_results = executor.execute_sqls(get_index_check_sqls(query, indexes, is_multi_node(executor)))
-    logging.info('index_check_results :%s',index_check_results)
-    valid_indexes = get_checked_indexes(index_check_results, set(index.get_table() for index in indexes))  #problem missing
-    logging.info('valid_indexes :%s',valid_indexes)
+    exe_sqls,hypopg_btree,hypopg_btree_table=get_index_check_sqls(query, indexes, is_multi_node(executor))  #这个query创建的hypopg与其他query不交叉
+    index_check_results = executor.execute_sqls(exe_sqls)
+    valid_indexes = get_checked_indexes(index_check_results, set(index.get_table() for index in indexes),hypopg_btree,hypopg_btree_table)  #problem missing
     cost = None
     for res in index_check_results:
         if '(cost' in res[0]:
             cost = parse_plan_cost(res[0])
             break
+    print("query_index_check valid_indexes :",valid_indexes)
     return valid_indexes, cost
 
 
@@ -823,9 +823,11 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
     pre_indexes = valid_indexes[:]
 
     # Increase the number of index columns in turn and check their validity.
-    for column_num in range(2, MAX_INDEX_COLUMN_NUM + 1):
+    for column_num in range(2, MAX_INDEX_COLUMN_NUM+1):
         for table, index_group in groupby(valid_indexes, key=lambda x: x.get_table()):
-            _original_base_indexes = [index for index in original_base_indexes if index.get_table() == table]
+            print("[index for index in original_base_indexes] :",[index.get_table().split('.')[-1] for index in original_base_indexes])
+            _original_base_indexes = [index for index in original_base_indexes if index.get_table().split('.')[-1] == table]
+            print("list(index_group) + _original_base_indexes :",list(index_group) + _original_base_indexes)
             for index in list(index_group) + _original_base_indexes:
                 columns = index.get_columns()
                 index_type = index.get_index_type()
@@ -834,18 +836,21 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
                     continue
                 need_check = True
                 for single_column_index in single_column_indexes:
-                    _table = single_column_index.get_table()
+                    _table = single_column_index.get_table().split('.')[-1]
                     if _table != table:
                         continue
                     single_column = single_column_index.get_columns()
                     single_index_type = single_column_index.get_index_type()
                     if single_column not in columns.split(COLUMN_DELIMITER):
+                        if index.get_columns_num()>1:
+                            print('index.get_columns_num()>1: ',index.get_columns(),column_num,MAX_INDEX_COLUMN_NUM)
                         add_more_column_index(valid_indexes, table, (columns, index_type),
                                               (single_column, single_index_type))
         if need_check:
             cur_indexes, cur_cost = query_index_check(executor, statement, valid_indexes)
             # If the cost reduction does not exceed 5%, return the previous indexes.
-            if cur_cost is not None and cost / cur_cost < 1.05:
+            # if cur_cost is not None and cost / cur_cost < 1.05:
+            if cur_cost is not None and cost < cur_cost :
                 set_source_indexes(pre_indexes, original_base_indexes)
                 return pre_indexes
             valid_indexes = cur_indexes
@@ -856,7 +861,6 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
             break
 
     # filtering of functionally redundant indexes due to index order
-    logging.info('valid_indexes :%s',valid_indexes)
     valid_indexes = remove_unused_indexes(executor, statement, valid_indexes)
     set_source_indexes(valid_indexes, original_base_indexes)
     return valid_indexes
@@ -1002,8 +1006,6 @@ def generate_query_placeholder_indexes(query, executor: BaseExecutor, n_distinct
         flatten_columns = UniqueList()
         for column in flatten(columns):
             flatten_columns.append(column)
-        logging.info(f'parsing query: {query}')
-        logging.info(f'found tables: {" ".join(tables)}, columns: {" ".join(flatten_columns)}')
     except (ValueError, AttributeError, KeyError) as e:
         logging.warning('Found %s while parsing SQL statement.', e)
         return []
@@ -1011,14 +1013,12 @@ def generate_query_placeholder_indexes(query, executor: BaseExecutor, n_distinct
         table_indexes = []
         table_context = get_table_context(table, executor)
         if not table_context or table_context.reltuples < reltuples:
-            logging.info(f'filtered: table_context is {table_context} and does not meet the requirements')
             continue
         for column in flatten_columns:
             if table_context.has_column(column) and table_context.get_n_distinct(column) <= n_distinct:
                 table_indexes.extend(generate_placeholder_indexes(table_context, column.split('.')[-1].lower()))
         # top 20 for candidate indexes
         indexes.extend(sorted(table_indexes, key=lambda x: table_context.get_n_distinct(x.get_columns()))[:20])
-    logging.info(f'related indexes: {indexes}')
     return indexes
 
 
@@ -1044,20 +1044,17 @@ def generate_candidate_indexes(workload: WorkLoad, executor: BaseExecutor, n_dis
     with executor.session():
         # Resolve the bug that indexes extended on top of the original index will not be recommended
         # by building the base index related to the original index
-        original_indexes = fetch_created_indexes(executor)
+        original_indexes = fetch_created_indexes(executor)    #已经存在的index
         original_base_indexes = get_original_base_indexes(original_indexes)
         for pos, query in GLOBAL_PROCESS_BAR.process_bar(list(enumerate(workload.get_queries())), 'Candidate indexes'):
             advised_indexes = []
             for advised_index in generate_query_placeholder_indexes(query.get_statement(), executor, n_distinct,
                                                                     reltuples, use_all_columns,
                                                                     ):
-                logging.info(' generate_query_placeholder_indexes advised_index :%s',advised_index)
                 if advised_index not in advised_indexes:
                     advised_indexes.append(advised_index)
-            logging.info(' out advised_indexes :%s',advised_indexes)
             valid_indexes = get_valid_indexes(advised_indexes, original_base_indexes, query.get_statement(), executor,
                                               **kwargs)
-            logging.info(f'get valid indexes: {valid_indexes} for the query {query}')
             add_query_indexes(valid_indexes, workload.get_queries(), pos)
             for index in valid_indexes:
                 if index not in all_indexes:
@@ -1251,13 +1248,10 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                            use_all_columns: bool, **kwargs):
     queries = compress_workload(workload_file_path)
     queries = [query for query in queries if is_valid_statement(executor, query.get_statement())]
-    logging.info('after is_valid_statement queries :%s',queries)
     workload = WorkLoad(queries)
-    logging.info('workload queries : %s', workload.get_queries())
     candidate_indexes = generate_candidate_indexes(workload, executor, n_distinct, reltuples, use_all_columns, **kwargs)
     print_candidate_indexes(candidate_indexes)
     index_advisor = IndexAdvisor(executor, workload, multi_iter_mode)
-    logging.info('candidate_indexes : %s',candidate_indexes)
     if candidate_indexes:
         print_header_boundary(" Determine optimal indexes ")
         with executor.session():
@@ -1272,14 +1266,11 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                 estimate_workload_cost_file(executor, workload, tuple(index_advisor.determine_indexes))
                 recalculate_cost_for_opt_indexes(workload, tuple(index_advisor.determine_indexes))
             determine_indexes = index_advisor.determine_indexes[:]
-            logging.info('1 index_advisor.determine_indexes :%s',index_advisor.determine_indexes)
             filter_no_benefit_indexes(index_advisor.determine_indexes)                  #     *************************problem
-            logging.info('2 index_advisor.determine_indexes :%s',index_advisor.determine_indexes)
             index_advisor.determine_indexes.sort(key=lambda index: -sum(query.get_benefit()
                                                                         for query in index.get_positive_queries()))
             workload.replace_indexes(tuple(determine_indexes), tuple(index_advisor.determine_indexes))
-            
-    logging.info('3 index_advisor.determine_indexes :%s',index_advisor.determine_indexes)
+
     index_advisor.display_advise_indexes_info(show_detail)
     created_indexes = fetch_created_indexes(executor)
     if kwargs.get('show_benefits'):
@@ -1362,7 +1353,7 @@ def main(argv):
                             default=MAX_CANDIDATE_COLUMNS)
     arg_parser.add_argument('--max-index-columns', type=int,
                             help='Maximum number of columns in a joint index',
-                            default=4)
+                            default=2)
     arg_parser.add_argument("--min-reltuples", type=int,
                             help="Minimum reltuples value for the index column.", default=10000)
     arg_parser.add_argument("--multi-node", "--multi_node", action='store_true',
