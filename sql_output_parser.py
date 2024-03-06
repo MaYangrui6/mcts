@@ -246,7 +246,6 @@ def get_checked_indexes(index_check_results, tables, hypopg_btree,hypopg_btree_t
     valid_indexes = []
     hypoid_table_column = {}
     hypo_index_info_length = 2
-    print('index_check_results :',index_check_results)
     for cur_tuple in index_check_results:
         # like '(<134672>btree_local_customer_c_customer_sk,134672,customer,"(c_customer_sk)")'
         # like cur_tuple :('(13384,<13384>btree_date_dim_d_date_sk)',)
@@ -267,7 +266,6 @@ def get_checked_indexes(index_check_results, tables, hypopg_btree,hypopg_btree_t
                 else:
                     hypoid_table_column[index_num] = table_name + ':' + column_name
         if 'Index' in text and 'Scan' in text and 'btree' in text:
-            print('btree :',text)
             __add_valid_index(text, hypoid_table_column, valid_indexes)
     return valid_indexes
 

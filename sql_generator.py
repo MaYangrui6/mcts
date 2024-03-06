@@ -108,7 +108,6 @@ def get_index_check_sqls(query, indexes, is_multi_node):
     for index in indexes:
         table = index.get_table()
         columns = index.get_columns()
-        print('hypopg_create_index table:%s columns :%s'%(table,columns))
         index_type = index.get_index_type()
         sqls.append("SELECT hypopg_create_index('CREATE INDEX ON %s(%s) %s')" %
                     (table, columns, index_type))

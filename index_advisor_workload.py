@@ -767,7 +767,6 @@ def query_index_check(executor, query, indexes, sort_by_column_no=True):
         if '(cost' in res[0]:
             cost = parse_plan_cost(res[0])
             break
-    print("query_index_check valid_indexes :",valid_indexes)
     return valid_indexes, cost
 
 
@@ -825,9 +824,7 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
     # Increase the number of index columns in turn and check their validity.
     for column_num in range(2, MAX_INDEX_COLUMN_NUM+1):
         for table, index_group in groupby(valid_indexes, key=lambda x: x.get_table()):
-            print("[index for index in original_base_indexes] :",[index.get_table().split('.')[-1] for index in original_base_indexes])
             _original_base_indexes = [index for index in original_base_indexes if index.get_table().split('.')[-1] == table]
-            print("list(index_group) + _original_base_indexes :",list(index_group) + _original_base_indexes)
             for index in list(index_group) + _original_base_indexes:
                 columns = index.get_columns()
                 index_type = index.get_index_type()
@@ -842,8 +839,6 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
                     single_column = single_column_index.get_columns()
                     single_index_type = single_column_index.get_index_type()
                     if single_column not in columns.split(COLUMN_DELIMITER):
-                        if index.get_columns_num()>1:
-                            print('index.get_columns_num()>1: ',index.get_columns(),column_num,MAX_INDEX_COLUMN_NUM)
                         add_more_column_index(valid_indexes, table, (columns, index_type),
                                               (single_column, single_index_type))
         if need_check:
@@ -1000,8 +995,9 @@ def generate_query_placeholder_indexes(query, executor: BaseExecutor, n_distinct
     try:
         tables = [table.lower() for table in parser.tables]
         columns = []
+        # print('parser.columns_dict.items() :',parser.columns_dict.items())
         for position, _columns in parser.columns_dict.items():
-            if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
+            if position.upper() not in ['INSERT', 'UPDATE']:
                 columns.extend(_columns)
         flatten_columns = UniqueList()
         for column in flatten(columns):
