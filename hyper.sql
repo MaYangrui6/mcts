@@ -204,48 +204,45 @@ order by avg_quarterly_sales,
 	 i_manufact_id
 limit 100;
 
-select  i_item_id
-       ,i_item_desc
-       ,s_state
-       ,count(ss_quantity) as store_sales_quantitycount
-       ,avg(ss_quantity) as store_sales_quantityave
-       ,stddev_samp(ss_quantity) as store_sales_quantitystdev
-       ,stddev_samp(ss_quantity)/avg(ss_quantity) as store_sales_quantitycov
-       ,count(sr_return_quantity) as store_returns_quantitycount
-       ,avg(sr_return_quantity) as store_returns_quantityave
-       ,stddev_samp(sr_return_quantity) as store_returns_quantitystdev
-       ,stddev_samp(sr_return_quantity)/avg(sr_return_quantity) as store_returns_quantitycov
-       ,count(cs_quantity) as catalog_sales_quantitycount ,avg(cs_quantity) as catalog_sales_quantityave
-       ,stddev_samp(cs_quantity) as catalog_sales_quantitystdev
-       ,stddev_samp(cs_quantity)/avg(cs_quantity) as catalog_sales_quantitycov
- from store_sales
-     ,store_returns
-     ,catalog_sales
-     ,date_dim d1
-     ,date_dim d2
-     ,date_dim d3
-     ,store
-     ,item
- where d1.d_quarter_name = '1998Q1'
-   and d1.d_date_sk = ss_sold_date_sk
-   and i_item_sk = ss_item_sk
-   and s_store_sk = ss_store_sk
-   and ss_customer_sk = sr_customer_sk
-   and ss_item_sk = sr_item_sk
-   and ss_ticket_number = sr_ticket_number
-   and sr_returned_date_sk = d2.d_date_sk
-   and d2.d_quarter_name in ('1998Q1','1998Q2','1998Q3')
-   and sr_customer_sk = cs_bill_customer_sk
-   and sr_item_sk = cs_item_sk
-   and cs_sold_date_sk = d3.d_date_sk
-   and d3.d_quarter_name in ('1998Q1','1998Q2','1998Q3')
- group by i_item_id
-         ,i_item_desc
-         ,s_state
- order by i_item_id
-         ,i_item_desc
-         ,s_state
-limit 100;
+select  c_last_name
+       ,c_first_name
+       ,ca_city
+       ,bought_city
+       ,ss_ticket_number
+       ,extended_price
+       ,extended_tax
+       ,list_price
+ from (select ss_ticket_number
+             ,ss_customer_sk
+             ,ca_city bought_city
+             ,sum(ss_ext_sales_price) extended_price
+             ,sum(ss_ext_list_price) list_price
+             ,sum(ss_ext_tax) extended_tax
+       from store_sales
+           ,date_dim
+           ,store
+           ,household_demographics
+           ,customer_address
+       where store_sales.ss_sold_date_sk = date_dim.d_date_sk
+         and store_sales.ss_store_sk = store.s_store_sk
+        and store_sales.ss_hdemo_sk = household_demographics.hd_demo_sk
+        and store_sales.ss_addr_sk = customer_address.ca_address_sk
+        and date_dim.d_dom between 1 and 2
+        and (household_demographics.hd_dep_count = 6 or
+             household_demographics.hd_vehicle_count= 1)
+        and date_dim.d_year in (1998,1998+1,1998+2)
+        and store.s_city in ('Pleasant Hill','Riverside')
+       group by ss_ticket_number
+               ,ss_customer_sk
+               ,ss_addr_sk,ca_city) dn
+      ,customer
+      ,customer_address current_addr
+ where ss_customer_sk = c_customer_sk
+   and customer.c_current_addr_sk = current_addr.ca_address_sk
+   and current_addr.ca_city <> bought_city
+ order by c_last_name
+         ,ss_ticket_number
+ limit 100;
 
 select
    substr(w_warehouse_name,1,20)

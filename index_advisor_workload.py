@@ -815,16 +815,18 @@ def set_source_indexes(indexes, source_indexes):
 def get_valid_indexes(advised_indexes, original_base_indexes, statement, executor, **kwargs):
     need_check = False
     single_column_indexes = generate_single_column_indexes(advised_indexes)                             # exsit
-    valid_indexes, cost = query_index_check(executor, statement, single_column_indexes)
-    valid_indexes = filter_candidate_columns_by_cost(valid_indexes, statement, executor,
-                                                     kwargs.get('max_candidate_columns', MAX_CANDIDATE_COLUMNS))
-    valid_indexes, cost = query_index_check(executor, statement, valid_indexes)
+    # valid_indexes, cost = query_index_check(executor, statement, single_column_indexes)
+    # valid_indexes = filter_candidate_columns_by_cost(valid_indexes, statement, executor,
+    #                                                  kwargs.get('max_candidate_columns', MAX_CANDIDATE_COLUMNS))
+    # valid_indexes, cost = query_index_check(executor, statement, valid_indexes)
+    valid_indexes = single_column_indexes[:]
+    _,cost= query_index_check(executor, statement, valid_indexes)
     pre_indexes = valid_indexes[:]
 
     # Increase the number of index columns in turn and check their validity.
     for column_num in range(2, MAX_INDEX_COLUMN_NUM+1):
         for table, index_group in groupby(valid_indexes, key=lambda x: x.get_table()):
-            _original_base_indexes = [index for index in original_base_indexes if index.get_table().split('.')[-1] == table]
+            _original_base_indexes = [index for index in original_base_indexes if index.get_table() == table]
             for index in list(index_group) + _original_base_indexes:
                 columns = index.get_columns()
                 index_type = index.get_index_type()
@@ -833,7 +835,7 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
                     continue
                 need_check = True
                 for single_column_index in single_column_indexes:
-                    _table = single_column_index.get_table().split('.')[-1]
+                    _table = single_column_index.get_table()
                     if _table != table:
                         continue
                     single_column = single_column_index.get_columns()
@@ -851,6 +853,7 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
             valid_indexes = cur_indexes
             pre_indexes = valid_indexes[:]
             cost = cur_cost
+            print('cost',cost)
             need_check = False
         else:
             break
@@ -1011,7 +1014,8 @@ def generate_query_placeholder_indexes(query, executor: BaseExecutor, n_distinct
         if not table_context or table_context.reltuples < reltuples:
             continue
         for column in flatten_columns:
-            if table_context.has_column(column) and table_context.get_n_distinct(column) <= n_distinct:
+            # if table_context.has_column(column) and table_context.get_n_distinct(column) <= n_distinct:
+            if table_context.has_column(column):
                 table_indexes.extend(generate_placeholder_indexes(table_context, column.split('.')[-1].lower()))
         # top 20 for candidate indexes
         indexes.extend(sorted(table_indexes, key=lambda x: table_context.get_n_distinct(x.get_columns()))[:20])
