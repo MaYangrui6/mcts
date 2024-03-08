@@ -68,6 +68,7 @@ class State(object):
         self.displayable_choices = []
 
     def reset_state(self):
+        # TODO. 记录每个 node 中 available_choices 对应的 Query 当前与估计最优的差距
         self.set_available_choices(set(AVAILABLE_CHOICES).difference(self.accumulation_choices))
 
     def get_available_choices(self):
@@ -100,8 +101,15 @@ class State(object):
 
     def get_next_state_with_random_choice(self):
         # Ensure that the choices taken are not repeated.
+        # TODO. 在 self.available_choices (set of AdvisedIndex) 中加入性能提升模型的估计结果，具体是在 AdvisedIndex 中新增一个 dict 用来记录涉及到的 Query 以及建立索引的提升潜力
         if not self.available_choices:
             return None
+        # TODO. Utility: 此处会根据 self.available_choices 各个 AdvisedIndex 涉及到的 Query 提升潜力来进行计算，选出能够给整个工作负载带来较大提升的 Index
+        # TODO. Influence: 此处还需要考虑 Index 的 Influence，即建立索引对于相似查询的增益。
+        #  !!!查询!!!相似度可取决于以下方面因素: 1. SQL_feature: 模板 => 会生成类似的查询计划 => 综合考虑到 Predicate Condition 和 Key Columns 前缀的相同会影响到查询计划中相同的算子，是会导致类似查询会受到索引配置的相同的增益影响
+        #                                      是否归属于同一模板，并计算 Predicate Condition 和 Key Columns 前缀的相似度
+        #                                   2. Indexable Columns: 确定当前 choice 归属于哪些 Query 的候选索引子集，提取一些重要的特征（Columns Order、表的大小、统计信息中的选择度），以此计算出影响力
+        #                                      采用 Jaccard Similarity 来计算
         random_choice = random.choice([choice for choice in self.available_choices])
         self.available_choices.remove(random_choice)
         choice = copy.copy(self.accumulation_choices)
@@ -208,7 +216,7 @@ def tree_policy(node):
 
     # Check if the current node is a leaf node.
     while node and not node.get_state().is_terminal():
-
+        # TODO. 如果达到提升的最优估计，后续节点无需探索，可以提前剪枝，node.is_all_optimal()
         if node.is_all_expand():
             if not node.children:
                 return node
@@ -319,6 +327,7 @@ def backpropagate(node, reward):
         node.update_visit_number()
 
         # Update the quality value.
+        # TODO. 这里需要向上传递 node 中所涉及到的每个 Query 当前（建立相应索引）与预计最优（建立最优索引）的差值，用于剪枝，Node.update_improvement_Dvalue
         node.update_quality_value(reward)
 
         # Change the node to the parent node.
