@@ -15,7 +15,12 @@ import re
 from typing import List
 import logging
 
+# from index_advisor_workload import hypopg_btree, hypopg_btree_table
+from table import get_table_context
+
 from sqlparse.tokens import Punctuation, Keyword, Name
+
+
 
 try:
     from utils import match_table_name, IndexItemFactory, ExistingIndex, AdvisedIndex, get_tokens, UniqueList, \
@@ -224,9 +229,7 @@ def __add_valid_index(record, hypoid_table_column, valid_indexes: list):
                 index_type = ''
             hypo_index_id = re.search(
                 r'\d+', token.split('_', 1)[0]).group()
-            logging.info('hypo_index_id :%s',hypo_index_id)
             table_columns = hypoid_table_column.get(hypo_index_id)
-            logging.info('table_columns :%s',table_columns)
             if not table_columns:
                 continue
             table, columns = table_columns.split(':')
@@ -235,62 +238,69 @@ def __add_valid_index(record, hypoid_table_column, valid_indexes: list):
                 valid_indexes.append(index)
 
 
-# def get_checked_indexes(index_check_results, tables) -> list:
-#     valid_indexes = []
-#     hypoid_table_column = {}
-#     hypo_index_info_length = 3
-#     btree_idx = 0
-#     index_id_idx = 1
-#     table_idx = 1
-#     columns_idx = 3
-#     for cur_tuple in index_check_results:
-#         # like '(<134672>btree_local_customer_c_customer_sk,134672,customer,"(c_customer_sk)")'
-#         #  ('(13382,<13382>btree_store_sales_ss_ext_sales_price)',)
-#         text = cur_tuple[0]
-#         if 'btree' in text:
-#             logging.info("text.split(',', 2) :%s",text.split(',', 2))
-#             logging.info("hypo_index_info_length :%s",hypo_index_info_length)
-#             if len(text.split(',', 2))+1 == hypo_index_info_length:
-#                 logging.info("len(text.split(',', 2)) :%s",len(text.split(',', 2)))
-#                 hypo_index_info = text.split(',', 2)
-#                 table_name = re.search(r'btree(_global|_local|)_(.*?%s)' % hypo_index_info[table_idx],hypo_index_info[btree_idx]).group(2)
-#                 match_flag, table_name = match_table_name(table_name, tables)
-#                 if not match_flag:
-#                     return valid_indexes
-#                 hypoid_table_column[hypo_index_info[index_id_idx]] = \
-#                     table_name + ':' + hypo_index_info[columns_idx].strip('"()')
 
-#         if 'Index' in text and 'Scan' in text and 'btree' in text:
-#             __add_valid_index(text, hypoid_table_column, valid_indexes)
-#         logging.info('get_checked_indexes cur_tuple :%s',cur_tuple)
-#     logging.info('get_checked_indexes hypoid_table_column :%s',hypoid_table_column)
-#     return valid_indexes
-
-
-def get_checked_indexes(index_check_results, tables) -> list:
+def get_checked_indexes(index_check_results, tables, hypopg_btree,hypopg_btree_table) -> list:
     table_names = []
     for table in tables:
-        table_name = table.split('.')[-1]  # 使用split函数根据'.'来分割字符串，并取最后一个部分作为表名
-        table_names.append(table_name)
+        table_names.append(table.split('.')[-1])  # 使用split函数根据'.'来分割字符串，并取最后一个部分作为表名
     valid_indexes = []
     hypoid_table_column = {}
     hypo_index_info_length = 2
-    btree_idx = 0
-    index_id_idx = 1
-    table_idx = 2
-    columns_idx = 3
     for cur_tuple in index_check_results:
         # like '(<134672>btree_local_customer_c_customer_sk,134672,customer,"(c_customer_sk)")'
-        # like cur_tuple :('(13384,<13384>btree_date_dim_d_month_seq)',)
+        # like cur_tuple :('(13384,<13384>btree_date_dim_d_date_sk)',)
+        # multi "<13382>btree_item_i_class_i_brand" on item  (cost=0.04..8.06 rows=1 width=102)
         text = cur_tuple[0]
+        table_name=''
         if len(text)>2 and text[1].isdigit() and 'btree' in text:
-            if len(text.split(',', 2)) == hypo_index_info_length:
-                index_num,btree = text[1:-1].split(',', 2)
-                for table_na in table_names:
-                    if table_na in btree:
-                        table_name=table_na
-                column_name = btree[btree.find(table_name)+len(table_name)+1:]
-                hypoid_table_column[index_num] = table_name + ':' + column_name
+            if len(text.split(',')) == hypo_index_info_length:
+                index_num,btree = text[1:-1].split(',')
+                for key_index in hypopg_btree:
+                    if key_index in btree:
+                        table_name=hypopg_btree_table[key_index]
+                        column_name=hypopg_btree[key_index]
+                        break
+                if table_name=='':
+                    print("error cant find ",btree,hypopg_btree,text)
+                    print("cur_tuple :",cur_tuple)
+                else:
+                    hypoid_table_column[index_num] = table_name + ':' + column_name
         if 'Index' in text and 'Scan' in text and 'btree' in text:
             __add_valid_index(text, hypoid_table_column, valid_indexes)
     return valid_indexes
+
+# def __add_valid_index(record, hypoid_table_column, valid_indexes: list):
+#     # like 'Index Scan using <134667>btree_global_item_i_manufact_id on item  (cost=0.00..68.53 rows=16 width=59)'
+#     # like ->  Index Scan using "<13382>btree_date_dim_d_month_seq" on date_dim  (cost=0.04..25.02 rows=349 width=4)
+#     sort_hypoid_table_column=sorted([x for x in hypoid_table_column],reverse=True)
+#     for columns in sort_hypoid_table_column:
+#         table=hypoid_table_column[columns]
+#         table_index_str=table+'_'+columns
+#         if table_index_str in record:
+#             index = IndexItemFactory().get_index(table, columns, '')
+#             if index not in valid_indexes:
+#                 valid_indexes.append(index)
+#             break
+#
+#
+# def get_checked_indexes(index_check_results, tables, hypopg_btree,hypopg_btree_table) -> list:
+#     table_names = []
+#     for table in tables:
+#         table_names.append(table.split('.')[-1])  # 使用split函数根据'.'来分割字符串，并取最后一个部分作为表名
+#     valid_indexes = []
+#     hypoid_table_column = {}
+#     hypo_index_info_length = 2
+#     for key_index in hypopg_btree:
+#         table_name = hypopg_btree_table[key_index]
+#         column_name = hypopg_btree[key_index]
+#         hypoid_table_column[column_name] = table_name
+#     print('hypoid_table_column :',hypoid_table_column)
+#     for cur_tuple in index_check_results:
+#         # like '(<134672>btree_local_customer_c_customer_sk,134672,customer,"(c_customer_sk)")'
+#         # like cur_tuple :('(13384,<13384>btree_date_dim_d_date_sk)',)
+#         # multi "<13382>btree_item_i_class_i_brand" on item  (cost=0.04..8.06 rows=1 width=102)
+#         text = cur_tuple[0]
+#         if 'Index' in text and 'Scan' in text and 'btree' in text:
+#             print('btree :',text)
+#             __add_valid_index(text, hypoid_table_column, valid_indexes)
+#     return valid_indexes

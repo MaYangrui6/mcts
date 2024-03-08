@@ -63,6 +63,7 @@ class DriverExecutor(BaseExecutor):
         # sqls = ['set current_schema = %s' % self.get_schema()] + sqls
         for sql in sqls:
             res = self.__execute(sql)
+            # print("sql :",sql)
             if res:
                 results.extend(res)
         return results
