@@ -107,7 +107,7 @@ class State(object):
         # TODO. Utility: 此处会根据 self.available_choices 各个 AdvisedIndex 涉及到的 Query 提升潜力来进行计算，选出能够给整个工作负载带来较大提升的 Index
         # TODO. Influence: 此处还需要考虑 Index 的 Influence，即建立索引对于相似查询的增益。
         #  !!!查询!!!相似度可取决于以下方面因素: 1. SQL_feature: 模板 => 会生成类似的查询计划 => 综合考虑到 Predicate Condition 和 Key Columns 前缀的相同会影响到查询计划中相同的算子，是会导致类似查询会受到索引配置的相同的增益影响
-        #                                      是否归属于同一模板，并计算 Predicate Condition 和 Key Columns 前缀的相似度
+        #                                      是否归属于同一模板，并计算 Predicate Condition 和 Key Columns 前缀的相似度。 是否还应考虑 查询选择率 和 数据分布等因素呢
         #                                   2. Indexable Columns: 确定当前 choice 归属于哪些 Query 的候选索引子集，提取一些重要的特征（Columns Order、表的大小、统计信息中的选择度），以此计算出影响力
         #                                      采用 Jaccard Similarity 来计算
         random_choice = random.choice([choice for choice in self.available_choices])

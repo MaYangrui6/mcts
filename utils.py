@@ -292,6 +292,7 @@ class WorkLoad:
     def __init__(self, queries: List[QueryItem]):
         self.__indexes_list = []
         self.__queries = queries
+        self.__tables = set()
         self.__index_names_list = [[] for _ in range(len(self.__queries))]
         self.__indexes_costs = [[] for _ in range(len(self.__queries))]
         self.__plan_list = [[] for _ in range(len(self.__queries))]
@@ -329,6 +330,12 @@ class WorkLoad:
         for indexes in self.__indexes_list:
             if indexes and len(indexes) == 1:
                 indexes[0].benefit = self.get_index_benefit(indexes[0])
+
+    def add_table(self, table_context):
+        self.__tables.add(table_context)
+
+    def get_tables(self):
+        return self.__tables
 
     def replace_indexes(self, origin, new):
         if not new:
