@@ -1,1 +1,0 @@
-{"store_sales": [["ss_net_profit", ""]], "customer_address": [["ca_address_sk", ""]], "date_dim": [["d_year", ""], ["d_month_seq", ""]], "item": [["i_item_sk", ""]]}
