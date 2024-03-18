@@ -31,16 +31,17 @@ from multiprocessing import Pool
 
 import sqlparse
 from sql_metadata import Parser
-
+import itertools
+sys.path.append('/home/ubuntu/project/mayang/mcts/AutoIndex_test')
 try:
     from .sql_output_parser import parse_single_advisor_results, parse_explain_plan, \
         get_checked_indexes, parse_table_sql_results, parse_existing_indexes_results, parse_plan_cost, parse_hypo_index
     from .sql_generator import get_single_advisor_sql, get_index_check_sqls, get_existing_index_sql, \
-        get_workload_cost_sqls, get_index_setting_sqls, get_prepare_sqls, get_hypo_index_head_sqls
+    get_workload_cost_sqls, get_index_setting_sqls, get_prepare_sqls, get_hypo_index_head_sqls
     from .executors.common import BaseExecutor
     from .executors.gsql_executor import GsqlExecutor
     from .mcts import MCTS
-    from .table import get_table_context, TableContext
+    from .table import get_table_context
     from .utils import match_table_name, IndexItemFactory, \
         AdvisedIndex, ExistingIndex, QueryItem, WorkLoad, QueryType, IndexType, COLUMN_DELIMITER, \
         lookfor_subsets_configs, has_dollar_placeholder, generate_placeholder_indexes, \
@@ -63,8 +64,48 @@ except ImportError:
         replace_comma_with_dollar, replace_function_comma, flatten, ERROR_KEYWORD
     from process_bar import bar_print, ProcessBar
 
+import os
+import random
+import torch
+import sys
+
+sys.path.append('/home/ubuntu/project/mayang/model/mcts/HyperQO')
+from HyperQO.ImportantConfig import Config
+from HyperQO.sql2fea import TreeBuilder
+from HyperQO.NET import TreeNet
+from HyperQO.TreeLSTM import SPINN
+from HyperQO.PGUtils import pgrunner
+import pandas as pd
+from HyperQO.sql_feature.workload_embedder import PredicateEmbedderDoc2Vec
+config = Config()
+random.seed(0)
+
+train = pd.read_csv('/home/ubuntu/project/LSTM+Attention/information/train.csv', index_col=0)
+queries = train['query'].values
+plans_json = train["plan_json"].values
+
+tree_builder = TreeBuilder()
+    # 这里的 input_size 必须为偶数！
+value_network = SPINN(head_num=config.head_num, input_size=36, hidden_size=config.hidden_size, table_num=50,
+                          sql_size=config.sql_size, attention_dim=30).to(config.device)
+
+value_network.load_state_dict((torch.load( '/home/ubuntu/project/LSTM+Attention/information/model_value_network.pth')))
+treenet_model = TreeNet(tree_builder, value_network)
+
+workload_embedder_path = os.path.join("/home/ubuntu/project/LSTM+Attention/information/tmp", "embedder.pth")
+workload_embedder = PredicateEmbedderDoc2Vec(queries[:], plans_json, 20, database_runner=pgrunner, file_name=workload_embedder_path)
+def get_query_improvement_from_model1(sql):
+    plan_json = pgrunner.getCostPlanJson(sql)
+    sql_vec = workload_embedder.get_embedding([sql])
+    # 计算损失
+    loss, pred_val = treenet_model.train(plan_json, sql_vec, torch.tensor(0), is_train=False)
+    return pred_val.item()
+
+
+
+
 SAMPLE_NUM = 5
-MAX_INDEX_COLUMN_NUM = 2
+MAX_INDEX_COLUMN_NUM = 4
 MAX_CANDIDATE_COLUMNS = 40
 MAX_INDEX_NUM = None
 MAX_INDEX_STORAGE = None
@@ -105,7 +146,7 @@ def set_logger():
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s'))
     logger = logging.getLogger()
     logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.WARNING)
 
 
 class CheckWordValid(argparse.Action):
@@ -156,7 +197,7 @@ def is_valid_statement(conn, statement):
     for _tuple in res:
         if isinstance(_tuple[0], str) and \
                 (_tuple[0].upper().startswith(ERROR_KEYWORD) or f' {ERROR_KEYWORD}: ' in _tuple[0].upper()):
-            logging.info('_tuple :%s', _tuple)
+            logging.info('_tuple :%s',_tuple)
             return False
     return True
 
@@ -197,11 +238,10 @@ class IndexAdvisor:
 
     def complex_index_advisor(self, candidate_indexes: List[AdvisedIndex]):
         atomic_config_total = generate_sorted_atomic_config(self.workload.get_queries(), candidate_indexes)
-        logging.info(f'atomic_config_total :{atomic_config_total},len=={len(atomic_config_total)}')
-        same_columns_config = generate_atomic_config_containing_same_columns(candidate_indexes)
-        for atomic_config in same_columns_config:
-            if atomic_config not in atomic_config_total:
-                atomic_config_total.append(atomic_config)
+        # same_columns_config = generate_atomic_config_containing_same_columns(candidate_indexes)
+        # for atomic_config in same_columns_config:
+        #     if atomic_config not in atomic_config_total:
+        #         atomic_config_total.append(atomic_config)
         if atomic_config_total and len(atomic_config_total[0]) != 0:
             raise ValueError("The empty atomic config isn't generated!")
         for atomic_config in GLOBAL_PROCESS_BAR.process_bar(atomic_config_total, 'Optimal indexes'):
@@ -210,6 +250,7 @@ class IndexAdvisor:
         if MAX_INDEX_STORAGE:
             opt_config = MCTS(self.workload, atomic_config_total, candidate_indexes,
                               MAX_INDEX_STORAGE, MAX_INDEX_NUM)
+            print('complex_index_advisor MCTS opt_config :',opt_config,len(opt_config))
         else:
             opt_config = greedy_determine_opt_config(self.workload, atomic_config_total,
                                                      candidate_indexes)
@@ -278,7 +319,6 @@ class IndexAdvisor:
             sql_num = self.workload.get_index_sql_num(index)
             total_benefit = 0
             # Calculate the average benefit of each positive SQL.
-            logging.info(f'positive_queries for {positive_queries}')
             for query in positive_queries:
                 current_cost = self.workload.get_indexes_cost_of_query(query, (index,))
                 origin_cost = self.workload.get_origin_cost_of_query(query)
@@ -475,8 +515,8 @@ class IndexAdvisor:
 
     def generate_redundant_useless_indexes(self, history_invalid_indexes):
         created_indexes = fetch_created_indexes(self.executor)
-        logging.info('len of created_indexes :%s', len(created_indexes))
-        logging.info('created_indexes :%s', created_indexes)
+        logging.info('len of created_indexes :%s',len(created_indexes))
+        logging.info('created_indexes :%s',created_indexes)
         record_history_invalid_indexes(self.integrate_indexes['historyIndexes'], history_invalid_indexes,
                                        created_indexes)
         print_header_boundary(" Created indexes ")
@@ -651,7 +691,7 @@ def generate_single_column_indexes(advised_indexes: List[AdvisedIndex]):
     return single_column_indexes
 
 
-def add_more_column_index(indexes, table, columns_info, single_col_info):
+def add_more_column_index(indexes, table, columns_info, single_col_info,dict={}):
     columns, columns_index_type = columns_info
     single_column, single_index_type = single_col_info
     if columns_index_type.strip('"') != single_index_type.strip('"'):
@@ -664,6 +704,8 @@ def add_more_column_index(indexes, table, columns_info, single_col_info):
                                                              columns_index_type)
         if current_columns_index in indexes:
             return
+        # 对index对应的query_improvement字典的合并
+        if dict: current_columns_index.set_query_pos(dict)
         # To make sure global is behind local
         if single_index_type == 'local':
             global_columns_index = IndexItemFactory().get_index(table, columns + COLUMN_DELIMITER + single_column,
@@ -758,17 +800,28 @@ def query_index_check(executor, query, indexes, sort_by_column_no=True):
         # When the cost values are the same, the execution plan picks the last index created.
         # Sort indexes to ensure that short indexes have higher priority.
         indexes = sorted(indexes, key=lambda index: -len(index.get_columns()))
-    exe_sqls, hypopg_btree, hypopg_btree_table = get_index_check_sqls(query, indexes, is_multi_node(
-        executor))  # 这个query创建的hypopg与其他query不交叉
+    exe_sqls,hypopg_btree,hypopg_btree_table=get_index_check_sqls(query, indexes, is_multi_node(executor))  #这个query创建的hypopg与其他query不交叉
     index_check_results = executor.execute_sqls(exe_sqls)
-    valid_indexes = get_checked_indexes(index_check_results, set(index.get_table() for index in indexes), hypopg_btree,
-                                        hypopg_btree_table)  # problem missing
+    valid_indexes = get_checked_indexes(index_check_results, set(index.get_table() for index in indexes),hypopg_btree,hypopg_btree_table)  #problem missing
     cost = None
     for res in index_check_results:
         if '(cost' in res[0]:
             cost = parse_plan_cost(res[0])
             break
+    print('cost :',cost)
     return valid_indexes, cost
+
+#计算单个query的cost
+def calculate_cost(executor, query, indexes):
+    exe_sqls, _, _ = get_index_check_sqls(query, indexes, is_multi_node(
+        executor))  # 这个query创建的hypopg与其他query不交叉
+    index_check_results = executor.execute_sqls(exe_sqls)
+    cost = None
+    for res in index_check_results:
+        if '(cost' in res[0]:
+            cost = parse_plan_cost(res[0])
+            break
+    return cost
 
 
 def remove_unused_indexes(executor, statement, valid_indexes):
@@ -815,19 +868,22 @@ def set_source_indexes(indexes, source_indexes):
 
 def get_valid_indexes(advised_indexes, original_base_indexes, statement, executor, **kwargs):
     need_check = False
-    single_column_indexes = generate_single_column_indexes(advised_indexes)  # exsit
+    single_column_indexes = generate_single_column_indexes(advised_indexes)
+    single_column_original_base_indexes = generate_single_column_indexes(original_base_indexes)
     # valid_indexes, cost = query_index_check(executor, statement, single_column_indexes)
     # valid_indexes = filter_candidate_columns_by_cost(valid_indexes, statement, executor,
     #                                                  kwargs.get('max_candidate_columns', MAX_CANDIDATE_COLUMNS))
     # valid_indexes, cost = query_index_check(executor, statement, valid_indexes)
     valid_indexes = single_column_indexes[:]
-    _, cost = query_index_check(executor, statement, valid_indexes)
+    _,cost= query_index_check(executor, statement, valid_indexes)
     pre_indexes = valid_indexes[:]
 
     # Increase the number of index columns in turn and check their validity.
-    for column_num in range(2, MAX_INDEX_COLUMN_NUM + 1):
+    for column_num in range(2, MAX_INDEX_COLUMN_NUM+1):
         for table, index_group in groupby(valid_indexes, key=lambda x: x.get_table()):
-            _original_base_indexes = [index for index in original_base_indexes if index.get_table() == table]
+            if len(table.split('.'))==2:
+                table=table.split('.')[-1]
+            _original_base_indexes = [index for index in set(single_column_original_base_indexes+original_base_indexes) if index.get_table().split('.')[-1] == table]
             for index in list(index_group) + _original_base_indexes:
                 columns = index.get_columns()
                 index_type = index.get_index_type()
@@ -835,8 +891,8 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
                 if index.get_columns_num() != column_num - 1:
                     continue
                 need_check = True
-                for single_column_index in single_column_indexes:
-                    _table = single_column_index.get_table()
+                for single_column_index in set(single_column_indexes + single_column_original_base_indexes):
+                    _table = single_column_index.get_table().split('.')[-1]
                     if _table != table:
                         continue
                     single_column = single_column_index.get_columns()
@@ -844,23 +900,22 @@ def get_valid_indexes(advised_indexes, original_base_indexes, statement, executo
                     if single_column not in columns.split(COLUMN_DELIMITER):
                         add_more_column_index(valid_indexes, table, (columns, index_type),
                                               (single_column, single_index_type))
-        if need_check:
-            cur_indexes, cur_cost = query_index_check(executor, statement, valid_indexes)
-            # If the cost reduction does not exceed 5%, return the previous indexes.
-            # if cur_cost is not None and cost / cur_cost < 1.05:
-            if cur_cost is not None and cost < cur_cost:
-                set_source_indexes(pre_indexes, original_base_indexes)
-                return pre_indexes
-            valid_indexes = cur_indexes
-            pre_indexes = valid_indexes[:]
-            cost = cur_cost
-            print('cost', cost)
-            need_check = False
-        else:
-            break
+    if need_check:
+        cur_indexes, cur_cost = query_index_check(executor, statement, valid_indexes)
+                # If the cost reduction does not exceed 5%, return the previous indexes.
+                # if cur_cost is not None and cost / cur_cost < 1.05:
+        #TODO =?
+        if cur_cost is not None and cost < cur_cost :
+            set_source_indexes(pre_indexes, original_base_indexes)
+            return pre_indexes
+        valid_indexes = cur_indexes
+        pre_indexes = valid_indexes[:]
+        cost = cur_cost
+        print('cost',cost)
 
-    # filtering of functionally redundant indexes due to index order
-    valid_indexes = remove_unused_indexes(executor, statement, valid_indexes)
+    #TODO :Question usefully?
+    # # filtering of functionally redundant indexes due to index order
+    # valid_indexes = remove_unused_indexes(executor, statement, valid_indexes)
     set_source_indexes(valid_indexes, original_base_indexes)
     return valid_indexes
 
@@ -990,43 +1045,37 @@ def add_query_indexes(indexes: List[AdvisedIndex], queries: List[QueryItem], pos
             queries[pos].append_index(_index)
 
 
-def generate_query_placeholder_indexes(workload: WorkLoad, query, executor: BaseExecutor, n_distinct=0.01,
-                                       reltuples=10000,
+def generate_query_placeholder_indexes(query, executor: BaseExecutor, n_distinct=0.01, reltuples=10000,
                                        use_all_columns=False):
     indexes = []
     if not has_dollar_placeholder(query) and not use_all_columns:
         return []
     parser = Parser(query)
-    tables = [table.lower() for table in parser.tables]
     try:
-        flatten_columns = get_indexable_columns(parser)
+        tables = [table.lower() for table in parser.tables]
+        columns = []
+        # print('parser.columns_dict.items() :',parser.columns_dict.items())
+        for position, _columns in parser.columns_dict.items():
+            if position.upper() not in ['INSERT', 'UPDATE']:
+                columns.extend(_columns)
+        flatten_columns = UniqueList()
+        for column in flatten(columns):
+            flatten_columns.append(column)
     except (ValueError, AttributeError, KeyError) as e:
         logging.warning('Found %s while parsing SQL statement.', e)
         return []
     for table in tables:
         table_indexes = []
         table_context = get_table_context(table, executor)
-        workload.add_table(table_context)
         if not table_context or table_context.reltuples < reltuples:
             continue
         for column in flatten_columns:
-            if table_context.has_column(column) and table_context.get_n_distinct(column) <= n_distinct:
-                # if table_context.has_column(column):
+            # if table_context.has_column(column) and table_context.get_n_distinct(column) <= n_distinct:
+            if table_context.has_column(column):
                 table_indexes.extend(generate_placeholder_indexes(table_context, column.split('.')[-1].lower()))
         # top 20 for candidate indexes
         indexes.extend(sorted(table_indexes, key=lambda x: table_context.get_n_distinct(x.get_columns()))[:20])
     return indexes
-
-
-def get_indexable_columns(parser):
-    columns = []
-    for position, _columns in parser.columns_dict.items():
-        if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
-            columns.extend(_columns)
-    flatten_columns = UniqueList()
-    for column in flatten(columns):
-        flatten_columns.append(column)
-    return flatten_columns
 
 
 def get_original_base_indexes(original_indexes: List[ExistingIndex]) -> List[AdvisedIndex]:
@@ -1044,6 +1093,11 @@ def get_original_base_indexes(original_indexes: List[ExistingIndex]) -> List[Adv
         all_columns_index.set_source_index(index)
     return original_base_indexes
 
+#添加query与index之间的生成对应关系
+def add_query_pos_out(indexes,pos,queries_improvement):
+    for index in indexes:
+        index.add_query_pos(pos,queries_improvement)
+
 
 def generate_candidate_indexes(workload: WorkLoad, executor: BaseExecutor, n_distinct, reltuples, use_all_columns,
                                **kwargs):
@@ -1051,18 +1105,21 @@ def generate_candidate_indexes(workload: WorkLoad, executor: BaseExecutor, n_dis
     with executor.session():
         # Resolve the bug that indexes extended on top of the original index will not be recommended
         # by building the base index related to the original index
-        original_indexes = fetch_created_indexes(executor)  # 已经存在的index
+        original_indexes = fetch_created_indexes(executor)    #已经存在的index
         original_base_indexes = get_original_base_indexes(original_indexes)
         for pos, query in GLOBAL_PROCESS_BAR.process_bar(list(enumerate(workload.get_queries())), 'Candidate indexes'):
             advised_indexes = []
-            for advised_index in generate_query_placeholder_indexes(workload, query.get_statement(), executor,
-                                                                    n_distinct,
+            print('pos :',pos)
+            for advised_index in generate_query_placeholder_indexes(query.get_statement(), executor, n_distinct,
                                                                     reltuples, use_all_columns,
                                                                     ):
                 if advised_index not in advised_indexes:
                     advised_indexes.append(advised_index)
             valid_indexes = get_valid_indexes(advised_indexes, original_base_indexes, query.get_statement(), executor,
                                               **kwargs)
+            print('len(valid_indexes) :',len(valid_indexes))
+            queries_improvement=workload.get_query_improvement()
+            add_query_pos_out(valid_indexes,pos,queries_improvement)
             add_query_indexes(valid_indexes, workload.get_queries(), pos)
             for index in valid_indexes:
                 if index not in all_indexes:
@@ -1085,29 +1142,26 @@ def powerset(iterable):
 
 def generate_sorted_atomic_config(queries: List[QueryItem],
                                   candidate_indexes: List[AdvisedIndex]) -> List[Tuple[AdvisedIndex, ...]]:
-    atomic_config_total = []
+    atomic_config_total = [()]
 
-    cnt = 0
-    for query in queries:
-        cnt += 1
-        logging.info(f'cnt num {cnt} queries:{query}')
-        if len(query.get_indexes()) == 0:
-            continue
-
-        indexes = []
-        for i, (table, group) in enumerate(groupby(query.get_sorted_indexes(), lambda x: x.get_table())):
-            # 它按照每个索引所属的表对索引进行分组。它返回一个可迭代的对象，每个元素都是一个 (key, group) 元组，其中 key 是分组的键（这里是表名），group 是该表的索引组成的迭代器
-            # The max number of table is 2.
-            if i > 1:
-                break
-            # The max index number for each table is 2.
-            indexes.extend(list(group)[:2])
-
-        atomic_configs = powerset(indexes)
-        for new_config in atomic_configs:
-            if new_config not in atomic_config_total:
-                atomic_config_total.append(new_config)
-    # Make sure atomic_config_total contains candidate_indexes.
+    # for query in queries:
+    #     if len(query.get_indexes()) == 0:
+    #         continue
+    #
+    #     indexes = []
+    #     for i, (table, group) in enumerate(groupby(query.get_sorted_indexes(), lambda x: x.get_table())):
+    #     #它按照每个索引所属的表对索引进行分组。它返回一个可迭代的对象，每个元素都是一个 (key, group) 元组，其中 key 是分组的键（这里是表名），group 是该表的索引组成的迭代器
+    #         # The max number of table is 2.
+    #         if i > 1:
+    #             break
+    #         # The max index number for each table is 2.
+    #         indexes.extend(list(group)[:2])
+    #
+    #     atomic_configs = powerset(indexes)
+    #     for new_config in atomic_configs:
+    #         if new_config not in atomic_config_total:
+    #             atomic_config_total.append(new_config)
+    # # Make sure atomic_config_total contains candidate_indexes.
     for index in candidate_indexes:
         if (index,) not in atomic_config_total:
             atomic_config_total.append((index,))
@@ -1221,46 +1275,6 @@ def get_last_indexes_result(input_path):
     return integrate_indexes
 
 
-def get_query_similarity_with_indexable_columns(workload: WorkLoad, query1: str, query2: str):
-    query1_indexable_columns = get_indexable_columns(Parser(query1))
-    query2_indexable_columns = get_indexable_columns(Parser(query2))
-
-    query_weights = defaultdict(dict)
-
-    # 计算 query1 的权重
-    for column in query1_indexable_columns:
-        for table in workload.get_tables():
-            if column not in table.columns:
-                continue
-            query_weights[query1][column] = (1 - table.get_n_distinct(column)) * table.size_weight
-
-    # 添加 query2 中不存在于 query1 的索引列，并将权重设置为0
-    for column in query2_indexable_columns:
-        if column not in query1_indexable_columns:
-            query_weights[query1][column] = 0
-
-    # 计算 query2 的权重
-    for column in query2_indexable_columns:
-        for table in workload.get_tables():
-            if column not in table.columns:
-                continue
-            query_weights[query2][column] = (1 - table.get_n_distinct(column)) * table.size_weight
-
-    # 添加 query1 中不存在于 query2 的索引列，并将权重设置为0
-    for column in query1_indexable_columns:
-        if column not in query2_indexable_columns:
-            query_weights[query2][column] = 0
-
-    intersection = sum(min(query_weights[query1][col], query_weights[query2][col]) for col in
-                       set(query_weights[query1]) & set(query_weights[query2]))
-    union = sum(max(query_weights[query1][col], query_weights[query2][col]) for col in
-                set(query_weights[query1]) & set(query_weights[query2]))
-    return intersection / union if union > 0 else 0
-
-
-
-
-
 def recalculate_cost_for_opt_indexes(workload: WorkLoad, indexes: Tuple[AdvisedIndex]):
     """After the recommended indexes are all built, calculate the gain of each index."""
     all_used_index_names = workload.get_workload_used_indexes(indexes)
@@ -1273,22 +1287,37 @@ def recalculate_cost_for_opt_indexes(workload: WorkLoad, indexes: Tuple[AdvisedI
         if not query_benefit > 0:
             continue
         for index in indexes:
-            logging.info('used_index_names :%s', used_index_names)
             for index_name in used_index_names:
-                logging.info('index.match_index_name(index_name):%s', index.match_index_name(index_name))
                 if index.match_index_name(index_name):
-                    logging.info('append_positive_query index : %s', index)
                     index.append_positive_query(query)
                     query.append_index(index)
 
 
 def filter_no_benefit_indexes(indexes):
     for index in indexes[:]:
-        logging.info(f'index : {index}')
-        logging.info('index.get_positive_queries() :%s', index.get_positive_queries())
         if not index.get_positive_queries():
             indexes.remove(index)
             logging.info(f'remove no benefit index {index}')
+
+def _add_merged_indexes(candidate_indexes):
+    #对每个表中的索引进行排列组合，然后将组合后的索引添加到原始索引集合中
+    index_type=''
+    for table, index_group in groupby(candidate_indexes[:], key=lambda x: x.get_table()):
+        table_to_colunms = list(index_group)
+        for index1, index2 in itertools.permutations(table_to_colunms, 2):
+            colunms=index1.get_columns()+', '+index2.get_columns()
+            colunms=colunms.split(',')[:MAX_INDEX_COLUMN_NUM]
+            cols=', '.join(colunms[:-1])
+            single_col=colunms[-1]
+            # 对index对应的query_improvement的合并
+            dict1 = index1.get_index_query_improvement_dict()
+            dict2 = index2.get_index_query_improvement_dict()
+            dict3 = dict1.copy()
+            dict3.update(dict2)
+            add_more_column_index(candidate_indexes,table,(cols,index_type),(single_col,index_type),dict3)
+
+
+    return candidate_indexes
 
 
 def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workload_file_path,
@@ -1296,16 +1325,28 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                            use_all_columns: bool, **kwargs):
     queries = compress_workload(workload_file_path)
     queries = [query for query in queries if is_valid_statement(executor, query.get_statement())]
+    queries_improvement = [get_query_improvement_from_model1(sql.get_statement()) for sql in queries]
+
     workload = WorkLoad(queries)
+    queries_cost_list = [calculate_cost(executor,sql.get_statement(),[]) for sql in queries]
+    workload.set_query_improvement(queries_improvement,queries_cost_list)
     candidate_indexes = generate_candidate_indexes(workload, executor, n_distinct, reltuples, use_all_columns, **kwargs)
+    print('before _add_merged_indexes len(candidate_indexes) :', len(candidate_indexes))
+    candidate_indexes = _add_merged_indexes(candidate_indexes)
+    print('after _add_merged_indexes len(candidate_indexes) :',len(candidate_indexes))
     print_candidate_indexes(candidate_indexes)
     index_advisor = IndexAdvisor(executor, workload, multi_iter_mode)
+    print('m :',workload.get_m_largest_sum_with_indices())
     if candidate_indexes:
         print_header_boundary(" Determine optimal indexes ")
         with executor.session():
             if multi_iter_mode:
                 logging.info('Mcts started')
                 opt_indexes = index_advisor.complex_index_advisor(candidate_indexes)
+                print('MCTS opt_indexes :',opt_indexes,len(opt_indexes))
+                reward=workload.get_final_state_reward(executor,workload.get_queries(),opt_indexes)
+                final_cost=sum([workload.get_origin_cost_of_query(sql) for sql in workload.get_queries()])-reward
+                print('MCTS index advisor reward and final_cost :',reward,final_cost)
             else:
                 opt_indexes = index_advisor.simple_index_advisor(candidate_indexes)
         if opt_indexes:
@@ -1314,7 +1355,8 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                 estimate_workload_cost_file(executor, workload, tuple(index_advisor.determine_indexes))
                 recalculate_cost_for_opt_indexes(workload, tuple(index_advisor.determine_indexes))
             determine_indexes = index_advisor.determine_indexes[:]
-            filter_no_benefit_indexes(index_advisor.determine_indexes)  # *************************problem
+            filter_no_benefit_indexes(index_advisor.determine_indexes)                  #     *************************会过滤不少index
+            print('determine_indexes :', index_advisor.determine_indexes, len(index_advisor.determine_indexes))
             index_advisor.determine_indexes.sort(key=lambda index: -sum(query.get_benefit()
                                                                         for query in index.get_positive_queries()))
             workload.replace_indexes(tuple(determine_indexes), tuple(index_advisor.determine_indexes))
@@ -1334,7 +1376,7 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
         sql_info = json.dumps(
             index_advisor.display_detail_info, indent=4, separators=(',', ':'))
         bar_print(sql_info)
-    return index_advisor.display_detail_info, index_advisor.index_benefits, index_advisor.redundant_indexes
+    return index_advisor.display_detail_info, index_advisor.index_benefits, index_advisor.redundant_indexes,final_cost
 
 
 def check_parameter(args):
@@ -1401,7 +1443,7 @@ def main(argv):
                             default=MAX_CANDIDATE_COLUMNS)
     arg_parser.add_argument('--max-index-columns', type=int,
                             help='Maximum number of columns in a joint index',
-                            default=2)
+                            default=4)
     arg_parser.add_argument("--min-reltuples", type=int,
                             help="Minimum reltuples value for the index column.", default=10000)
     arg_parser.add_argument("--multi-node", "--multi_node", action='store_true',
@@ -1420,6 +1462,9 @@ def main(argv):
     args.W = get_password()
     check_parameter(args)
     # Initialize the connection.
+    import time
+    start_time = time.time()
+
     if args.driver:
         try:
             import psycopg2
@@ -1437,10 +1482,15 @@ def main(argv):
     else:
         executor = GsqlExecutor(args.database, args.db_user, args.W, args.db_host, args.db_port, args.schema)
     use_all_columns = True
-    index_advisor_workload(get_last_indexes_result(args.file), executor, args.file,
+
+    _,_,_,final_cost=index_advisor_workload(get_last_indexes_result(args.file), executor, args.file,
                            args.multi_iter_mode, args.show_detail, args.max_n_distinct, args.min_reltuples,
                            use_all_columns, improved_rate=args.min_improved_rate,
                            max_candidate_columns=args.max_candidate_columns, show_benefits=args.show_benefits)
+    end_time = time.time()
+    execution_time = end_time - start_time
+    print('final_cost :',final_cost)
+    print("Hyper_MCTS 程序执行时间：", execution_time, "秒")
 
 
 if __name__ == '__main__':

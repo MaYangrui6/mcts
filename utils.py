@@ -23,6 +23,7 @@ import sqlparse
 from sqlparse.tokens import Name
 from sqlparse.sql import Function, Parenthesis, IdentifierList
 
+
 COLUMN_DELIMITER = ', '
 QUERY_PLAN_SUFFIX = 'QUERY PLAN'
 EXPLAIN_SUFFIX = 'EXPLAIN'
@@ -140,6 +141,28 @@ class AdvisedIndex:
         self.association_indexes = defaultdict(list)
         self.__positive_queries = []
         self.__source_index = None
+        self.__query_pos = {}
+        self.__index_improvement = None
+
+    def add_query_pos(self,pos,queries_improvement):
+        if pos not in self.__query_pos :
+            self.__query_pos[pos]=queries_improvement[pos]
+
+    def set_query_pos(self,query_pos):
+        self.__query_pos = query_pos
+
+    def get_index_query_improvement_dict(self):
+        return self.__query_pos
+
+    def get_index_improvement_average(self):
+        improvement=0
+        improvement_dict=self.get_index_query_improvement_dict()
+        for key,value in improvement_dict.items():
+            improvement+=value
+        return improvement/len(improvement_dict)
+
+    def set_index_improvement(self):
+        self.__index_improvement = self.get_index_improvement_average()
 
     def set_source_index(self, source_index: ExistingIndex):
         self.__source_index = source_index
@@ -292,10 +315,70 @@ class WorkLoad:
     def __init__(self, queries: List[QueryItem]):
         self.__indexes_list = []
         self.__queries = queries
-        self.__tables = set()
         self.__index_names_list = [[] for _ in range(len(self.__queries))]
         self.__indexes_costs = [[] for _ in range(len(self.__queries))]
         self.__plan_list = [[] for _ in range(len(self.__queries))]
+        self.__query_improvement = []
+        self.__query_index_cost_cache = {}
+
+    def get_m_largest_sum_with_indices(self,threshold=0.8):
+        nums_with_indices = list(enumerate(self.get_query_improvement()))  # 列表中每个数和其对应的索引
+        nums_with_indices_sorted = sorted(nums_with_indices, key=lambda x: x[1], reverse=True)  # 按数值降序排序
+        half_max_indices_num =len(nums_with_indices)//5
+        half_max_indices = [x[0] for x in nums_with_indices_sorted[:half_max_indices_num]]
+        print('nums_with_indices :',nums_with_indices_sorted)
+        total_sum = sum(num for _, num in nums_with_indices_sorted)  # 计算列表中所有数的总和
+        print('total_sum :',total_sum)
+        target_sum = total_sum * threshold  # 计算80%阈值的目标和
+        current_sum = 0
+        m = 0
+        indices = []
+
+        # 遍历排序后的数值列表，累加直到达到80%的阈值
+        for index, num in nums_with_indices_sorted:
+            current_sum += num
+            m += 1
+            indices.append(index)
+            if current_sum >= target_sum:
+                break
+        #至少返回1/4的query
+        if m > half_max_indices_num:
+            return m, indices
+        else:
+            return half_max_indices_num,half_max_indices
+
+    def get_final_state_reward(self, executor, query_list, indexes):
+        from index_advisor_workload import calculate_cost
+        # 检查缓存中是否有已经计算过的成本和收益
+        indexes=sorted(indexes, key=lambda x: (x.get_table(), x.get_columns()))
+        reward=0
+        for query in query_list:
+            cache_key = (query, tuple(indexes))
+            if cache_key in self.__query_index_cost_cache:
+                query_reward = self.__query_index_cost_cache[cache_key]
+            else:
+                # 计算原始成本
+                origin_cost = self.get_origin_cost_of_query(query)
+
+                # 计算索引后的成本
+                cost_with_indexes = calculate_cost(executor, query.get_statement(), indexes)
+
+                # 计算收益
+                query_reward = origin_cost - cost_with_indexes
+
+                # 更新缓存
+                self.__query_index_cost_cache[cache_key] = query_reward
+
+            reward +=query_reward
+
+        return reward
+
+    def set_query_improvement(self,query_improvement,queries_cost_list):
+        for num in range(len(query_improvement)):
+            self.__query_improvement.append(query_improvement[num]*queries_cost_list[num])
+
+    def get_query_improvement(self):
+        return self.__query_improvement
 
     def get_queries(self) -> List[QueryItem]:
         return self.__queries
@@ -330,12 +413,6 @@ class WorkLoad:
         for indexes in self.__indexes_list:
             if indexes and len(indexes) == 1:
                 indexes[0].benefit = self.get_index_benefit(indexes[0])
-
-    def add_table(self, table_context):
-        self.__tables.add(table_context)
-
-    def get_tables(self):
-        return self.__tables
 
     def replace_indexes(self, origin, new):
         if not new:
@@ -498,7 +575,7 @@ def match_columns(column1, column2):
 
 def infer_workload_benefit(workload: WorkLoad, config: List[AdvisedIndex],
                            atomic_config_total: List[Tuple[AdvisedIndex]]):
-    """ Infer the total cost of queries for a config according to the cost of atomic configs. """
+    """ Infer the most important queries for a config according to the model1 """
     total_benefit = 0
     atomic_subsets_configs = lookfor_subsets_configs(config, atomic_config_total)   #查找给定配置中的子集---是否在原子配置列表中存在
     is_recorded = [True] * len(atomic_subsets_configs)
@@ -632,3 +709,4 @@ def flatten(iterable):
                 yield item
         else:
             yield _iter
+
