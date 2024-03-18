@@ -19,6 +19,8 @@ from typing import List, Tuple, Sequence, Any
 from contextlib import contextmanager
 import logging
 
+
+
 import sqlparse
 from sqlparse.tokens import Name
 from sqlparse.sql import Function, Parenthesis, IdentifierList
@@ -320,6 +322,7 @@ class WorkLoad:
         self.__plan_list = [[] for _ in range(len(self.__queries))]
         self.__query_improvement = []
         self.__query_index_cost_cache = {}
+        self.__origin_cost =0
 
     def get_m_largest_sum_with_indices(self,threshold=0.8):
         nums_with_indices = list(enumerate(self.get_query_improvement()))  # 列表中每个数和其对应的索引
@@ -347,31 +350,38 @@ class WorkLoad:
         else:
             return half_max_indices_num,half_max_indices
 
-    def get_final_state_reward(self, executor, query_list, indexes):
+    def set_workload_origin_cost(self,executor):
         from index_advisor_workload import calculate_cost
+        origin_cost = 0
+        for sql in self.get_queries():
+            origin_cost += calculate_cost(executor, sql.get_statement(), None)
+        self.__origin_cost=origin_cost
+
+
+    def get_workload_origin_cost(self):
+        return self.__origin_cost
+
+    def get_final_state_reward(self, executor, query_list, indexes):
         # 检查缓存中是否有已经计算过的成本和收益
         indexes=sorted(indexes, key=lambda x: (x.get_table(), x.get_columns()))
-        reward=0
+        query_cost_index=0
         for query in query_list:
             cache_key = (query, tuple(indexes))
             if cache_key in self.__query_index_cost_cache:
-                query_reward = self.__query_index_cost_cache[cache_key]
+                cost_with_indexes = self.__query_index_cost_cache[cache_key]
             else:
-                # 计算原始成本
-                origin_cost = self.get_origin_cost_of_query(query)
+                from index_advisor_workload import calculate_cost
 
                 # 计算索引后的成本
                 cost_with_indexes = calculate_cost(executor, query.get_statement(), indexes)
 
-                # 计算收益
-                query_reward = origin_cost - cost_with_indexes
-
                 # 更新缓存
-                self.__query_index_cost_cache[cache_key] = query_reward
+                self.__query_index_cost_cache[cache_key] = cost_with_indexes
 
-            reward +=query_reward
+            query_cost_index +=cost_with_indexes
+        origin_cost = self.get_workload_origin_cost()
 
-        return reward
+        return origin_cost-query_cost_index
 
     def set_query_improvement(self,query_improvement,queries_cost_list):
         for num in range(len(query_improvement)):

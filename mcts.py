@@ -18,6 +18,7 @@ import copy
 import logging
 from collections import defaultdict
 from utils import infer_workload_benefit
+
 # from index_advisor_workload import calculate_cost
 # try:
 #     from utils import infer_workload_benefit

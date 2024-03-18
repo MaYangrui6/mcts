@@ -255,9 +255,9 @@ class IndexAdvisor:
             opt_config = greedy_determine_opt_config(self.workload, atomic_config_total,
                                                      candidate_indexes)
         self.filter_redundant_indexes_with_diff_types(opt_config)
-        self.filter_same_columns_indexes(opt_config, self.workload)
-        self.display_detail_info['positive_stmt_count'] = get_positive_sql_count(opt_config,
-                                                                                 self.workload)
+        # self.filter_same_columns_indexes(opt_config, self.workload)
+        # self.display_detail_info['positive_stmt_count'] = get_positive_sql_count(opt_config,
+        #                                                                          self.workload)
         if len(opt_config) == 0:
             bar_print("No optimal indexes generated!")
             return None
@@ -310,49 +310,49 @@ class IndexAdvisor:
         index_current_storage = 0
         cnt = 0
         for key, index in enumerate(opt_indexes):
-            sql_optimized = 0
-            negative_sql_ratio = 0
-            insert_queries, delete_queries, \
-            update_queries, select_queries, \
-            positive_queries, ineffective_queries, \
-            negative_queries = self.workload.get_index_related_queries(index)
-            sql_num = self.workload.get_index_sql_num(index)
-            total_benefit = 0
-            # Calculate the average benefit of each positive SQL.
-            for query in positive_queries:
-                current_cost = self.workload.get_indexes_cost_of_query(query, (index,))
-                origin_cost = self.workload.get_origin_cost_of_query(query)
-                sql_optimized += (1 - current_cost / origin_cost) * query.get_frequency()
-                benefit = origin_cost - current_cost
-                total_benefit += benefit
-            total_queries_num = sql_num['negative'] + sql_num['ineffective'] + sql_num['positive']
-            if total_queries_num:
-                negative_sql_ratio = sql_num['negative'] / total_queries_num
-            # Filter the candidate indexes that do not meet the conditions of optimization.
-            logging.info(f'filter low benefit index for {index}')
-            if not positive_queries:
-                logging.info('filtered: positive_queries not found for the index')
-                continue
-            if sql_optimized / sql_num['positive'] < improved_rate and total_benefit < MAX_BENEFIT_THRESHOLD:
-                logging.info(f"filtered: improved_rate {sql_optimized / sql_num['positive']} less than {improved_rate}")
-                continue
-            if sql_optimized / sql_num['positive'] < \
-                    NEGATIVE_RATIO_THRESHOLD < negative_sql_ratio:
-                logging.info(f'filtered: improved_rate {sql_optimized / sql_num["positive"]} < '
-                             f'negative_ratio_threshold < negative_sql_ratio {negative_sql_ratio} is not met')
-                continue
-            logging.info(f'{index} has benefit of {self.workload.get_index_benefit(index)}')
-            if MAX_INDEX_STORAGE and (index_current_storage + index.get_storage()) > MAX_INDEX_STORAGE:
-                logging.info('filtered: if add the index {index}, it reaches the max index storage.')
-                continue
-            if MAX_INDEX_NUM and cnt == MAX_INDEX_NUM:
-                logging.info('filtered: reach the maximum number for the index.')
-                break
-            if not self.multi_iter_mode and index.benefit <= 0:
-                logging.info('filtered: benefit not above 0 for the index.')
-                continue
-            index_current_storage += index.get_storage()
-            cnt += 1
+            # sql_optimized = 0
+            # negative_sql_ratio = 0
+            # insert_queries, delete_queries, \
+            # update_queries, select_queries, \
+            # positive_queries, ineffective_queries, \
+            # negative_queries = self.workload.get_index_related_queries(index)
+            # sql_num = self.workload.get_index_sql_num(index)
+            # total_benefit = 0
+            # # Calculate the average benefit of each positive SQL.
+            # for query in positive_queries:
+            #     current_cost = self.workload.get_indexes_cost_of_query(query, (index,))
+            #     origin_cost = self.workload.get_origin_cost_of_query(query)
+            #     sql_optimized += (1 - current_cost / origin_cost) * query.get_frequency()
+            #     benefit = origin_cost - current_cost
+            #     total_benefit += benefit
+            # total_queries_num = sql_num['negative'] + sql_num['ineffective'] + sql_num['positive']
+            # if total_queries_num:
+            #     negative_sql_ratio = sql_num['negative'] / total_queries_num
+            # # Filter the candidate indexes that do not meet the conditions of optimization.
+            # logging.info(f'filter low benefit index for {index}')
+            # if not positive_queries:
+            #     logging.info('filtered: positive_queries not found for the index')
+            #     continue
+            # if sql_optimized / sql_num['positive'] < improved_rate and total_benefit < MAX_BENEFIT_THRESHOLD:
+            #     logging.info(f"filtered: improved_rate {sql_optimized / sql_num['positive']} less than {improved_rate}")
+            #     continue
+            # if sql_optimized / sql_num['positive'] < \
+            #         NEGATIVE_RATIO_THRESHOLD < negative_sql_ratio:
+            #     logging.info(f'filtered: improved_rate {sql_optimized / sql_num["positive"]} < '
+            #                  f'negative_ratio_threshold < negative_sql_ratio {negative_sql_ratio} is not met')
+            #     continue
+            # logging.info(f'{index} has benefit of {self.workload.get_index_benefit(index)}')
+            # if MAX_INDEX_STORAGE and (index_current_storage + index.get_storage()) > MAX_INDEX_STORAGE:
+            #     logging.info('filtered: if add the index {index}, it reaches the max index storage.')
+            #     continue
+            # if MAX_INDEX_NUM and cnt == MAX_INDEX_NUM:
+            #     logging.info('filtered: reach the maximum number for the index.')
+            #     break
+            # if not self.multi_iter_mode and index.benefit <= 0:
+            #     logging.info('filtered: benefit not above 0 for the index.')
+            #     continue
+            # index_current_storage += index.get_storage()
+            # cnt += 1
             self.determine_indexes.append(index)
 
     def print_benefits(self, created_indexes: List[ExistingIndex]):
@@ -783,11 +783,13 @@ def estimate_workload_cost_file(executor, workload, indexes=None):
         index_setting_sqls = get_index_setting_sqls(indexes, is_multi_node(executor))
         hypo_index_ids = parse_hypo_index(executor.execute_sqls(index_setting_sqls))
         update_index_storage(indexes, hypo_index_ids, executor)
-        costs, index_names, plans = get_workload_costs([query.get_statement() for query in
-                                                        workload.get_queries()], executor)
-        # Update query cost for select queries and positive_pos for indexes.
-        for cost, query_pos in zip(costs, select_queries_pos):
-            query_costs[query_pos] = cost * workload.get_queries()[query_pos].get_frequency()
+        # costs, index_names, plans = get_workload_costs([query.get_statement() for query in
+        #                                                 workload.get_queries()], executor)
+        # # Update query cost for select queries and positive_pos for indexes.
+        # for cost, query_pos in zip(costs, select_queries_pos):
+        #     query_costs[query_pos] = cost * workload.get_queries()[query_pos].get_frequency()
+        index_names=[' ']*len(workload.get_queries())
+        plans=[' ']*len(workload.get_queries())
         workload.add_indexes(indexes, query_costs, index_names, plans)
 
 
@@ -1328,6 +1330,7 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
     queries_improvement = [get_query_improvement_from_model1(sql.get_statement()) for sql in queries]
 
     workload = WorkLoad(queries)
+    workload.set_workload_origin_cost(executor)
     queries_cost_list = [calculate_cost(executor,sql.get_statement(),[]) for sql in queries]
     workload.set_query_improvement(queries_improvement,queries_cost_list)
     candidate_indexes = generate_candidate_indexes(workload, executor, n_distinct, reltuples, use_all_columns, **kwargs)
@@ -1345,21 +1348,22 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                 opt_indexes = index_advisor.complex_index_advisor(candidate_indexes)
                 print('MCTS opt_indexes :',opt_indexes,len(opt_indexes))
                 reward=workload.get_final_state_reward(executor,workload.get_queries(),opt_indexes)
-                final_cost=sum([workload.get_origin_cost_of_query(sql) for sql in workload.get_queries()])-reward
+                final_cost=workload.get_workload_origin_cost()-reward
+                print('workload.get_workload_origin_cost() :',workload.get_workload_origin_cost())
                 print('MCTS index advisor reward and final_cost :',reward,final_cost)
             else:
                 opt_indexes = index_advisor.simple_index_advisor(candidate_indexes)
         if opt_indexes:
             index_advisor.filter_low_benefit_index(opt_indexes, kwargs.get('improved_rate', 0))
-            if index_advisor.determine_indexes:
-                estimate_workload_cost_file(executor, workload, tuple(index_advisor.determine_indexes))
-                recalculate_cost_for_opt_indexes(workload, tuple(index_advisor.determine_indexes))
-            determine_indexes = index_advisor.determine_indexes[:]
-            filter_no_benefit_indexes(index_advisor.determine_indexes)                  #     *************************会过滤不少index
+            # if index_advisor.determine_indexes:
+            #     estimate_workload_cost_file(executor, workload, tuple(index_advisor.determine_indexes))
+            #     recalculate_cost_for_opt_indexes(workload, tuple(index_advisor.determine_indexes))
+            # determine_indexes = index_advisor.determine_indexes[:]
+            # filter_no_benefit_indexes(index_advisor.determine_indexes)                  #     *************************会过滤不少index
             print('determine_indexes :', index_advisor.determine_indexes, len(index_advisor.determine_indexes))
-            index_advisor.determine_indexes.sort(key=lambda index: -sum(query.get_benefit()
-                                                                        for query in index.get_positive_queries()))
-            workload.replace_indexes(tuple(determine_indexes), tuple(index_advisor.determine_indexes))
+            # index_advisor.determine_indexes.sort(key=lambda index: -sum(query.get_benefit()
+            #                                                             for query in index.get_positive_queries()))
+            # workload.replace_indexes(tuple(determine_indexes), tuple(index_advisor.determine_indexes))
 
     index_advisor.display_advise_indexes_info(show_detail)
     created_indexes = fetch_created_indexes(executor)
@@ -1367,8 +1371,8 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
         index_advisor.print_benefits(created_indexes)
     index_advisor.generate_incremental_index(history_advise_indexes)
     history_invalid_indexes = {}
-    with executor.session():
-        index_advisor.generate_redundant_useless_indexes(history_invalid_indexes)
+    # with executor.session():
+    #     index_advisor.generate_redundant_useless_indexes(history_invalid_indexes)
     index_advisor.display_incremental_index(
         history_invalid_indexes, workload_file_path)
     if show_detail:
