@@ -1331,8 +1331,9 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
 
     workload = WorkLoad(queries)
     workload.set_workload_origin_cost(executor)
-    queries_cost_list = [calculate_cost(executor,sql.get_statement(),[]) for sql in queries]
-    workload.set_query_improvement(queries_improvement,queries_cost_list)
+    queries_origin_cost_list = [calculate_cost(executor,sql.get_statement(),[]) for sql in queries]
+    workload.set_query_origin_cost(queries_origin_cost_list)
+    workload.set_query_improvement(queries_improvement)
     candidate_indexes = generate_candidate_indexes(workload, executor, n_distinct, reltuples, use_all_columns, **kwargs)
     print('before _add_merged_indexes len(candidate_indexes) :', len(candidate_indexes))
     candidate_indexes = _add_merged_indexes(candidate_indexes)
@@ -1347,7 +1348,7 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                 logging.info('Mcts started')
                 opt_indexes = index_advisor.complex_index_advisor(candidate_indexes)
                 print('MCTS opt_indexes :',opt_indexes,len(opt_indexes))
-                reward=workload.get_final_state_reward(executor,workload.get_queries(),opt_indexes)
+                reward=workload.get_final_state_reward(executor,list(range(len(workload.get_queries()))),opt_indexes)
                 final_cost=workload.get_workload_origin_cost()-reward
                 print('workload.get_workload_origin_cost() :',workload.get_workload_origin_cost())
                 print('MCTS index advisor reward and final_cost :',reward,final_cost)

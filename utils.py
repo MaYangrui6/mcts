@@ -322,7 +322,11 @@ class WorkLoad:
         self.__plan_list = [[] for _ in range(len(self.__queries))]
         self.__query_improvement = []
         self.__query_index_cost_cache = {}
-        self.__origin_cost =0
+        self.__origin_cost = 0
+        self.__queries_origin_cost= []
+
+    def get_query_index_cost_cache(self):
+        return self.__query_index_cost_cache
 
     def get_m_largest_sum_with_indices(self,threshold=0.8):
         nums_with_indices = list(enumerate(self.get_query_improvement()))  # 列表中每个数和其对应的索引
@@ -365,27 +369,30 @@ class WorkLoad:
         # 检查缓存中是否有已经计算过的成本和收益
         indexes=sorted(indexes, key=lambda x: (x.get_table(), x.get_columns()))
         query_cost_index=0
-        for query in query_list:
-            cache_key = (query, tuple(indexes))
+        origin_cost=0
+        for query_num in query_list:
+            cache_key = (query_num, tuple(indexes))
             if cache_key in self.__query_index_cost_cache:
                 cost_with_indexes = self.__query_index_cost_cache[cache_key]
             else:
                 from index_advisor_workload import calculate_cost
-
                 # 计算索引后的成本
-                cost_with_indexes = calculate_cost(executor, query.get_statement(), indexes)
+                cost_with_indexes = calculate_cost(executor, self.get_queries()[query_num].get_statement(), indexes)
 
                 # 更新缓存
                 self.__query_index_cost_cache[cache_key] = cost_with_indexes
 
             query_cost_index +=cost_with_indexes
-        origin_cost = self.get_workload_origin_cost()
+        origin_cost = sum([self.__queries_origin_cost[x] for x in query_list])
 
         return origin_cost-query_cost_index
 
-    def set_query_improvement(self,query_improvement,queries_cost_list):
+    def set_query_origin_cost(self,queries_cost_list):
+        self.__queries_origin_cost=queries_cost_list
+
+    def set_query_improvement(self,query_improvement):
         for num in range(len(query_improvement)):
-            self.__query_improvement.append(query_improvement[num]*queries_cost_list[num])
+            self.__query_improvement.append(query_improvement[num]*self.__queries_origin_cost[num])
 
     def get_query_improvement(self):
         return self.__query_improvement

@@ -313,9 +313,9 @@ def default_policy(node):
     # final_state_reward = current_state.get_current_benefit()
     # important_query ,pos =get_important_query(WORKLOAD,current_state.accumulation_choices)
     # query_list = [important_query]
-    query_list=[WORKLOAD.get_queries()[x] for x in M_Largest_Query_List]
-    final_state_reward = WORKLOAD.get_final_state_reward(executor,query_list,current_state.accumulation_choices)
-    print(final_state_reward)
+    # query_list=[WORKLOAD.get_queries()[x] for x in M_Largest_Query_List]
+    final_state_reward = WORKLOAD.get_final_state_reward(executor,M_Largest_Query_List,current_state.accumulation_choices)
+    print('final_state_reward :',final_state_reward)
     # print('calculate_cost reward query_pos :%s,index :%s,cost_reduction :%s'%(pos,current_state.accumulation_choices,final_state_reward))
     return final_state_reward
 
@@ -406,6 +406,7 @@ def monte_carlo_tree_search(node):
     """
 
     computation_budget = len(AVAILABLE_CHOICES) * STORAGE_THRESHOLD / TOTAL_STORAGE * 50
+    print('computation_budget :',computation_budget)
     logging.info('ite_times monte_carlo_tree_search computation_budget :%s',computation_budget)
 
     # Run as much as possible under the computation budget.
@@ -463,4 +464,5 @@ def MCTS(workload_info, atomic_choices, available_choices, storage_threshold, ma
             else:
                 break
         print('opt_config :',opt_config,len(opt_config))
+    print('what-if call times in MCTS :',len(WORKLOAD.get_query_index_cost_cache()))
     return opt_config
