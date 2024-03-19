@@ -16,11 +16,11 @@ from typing import List
 from functools import lru_cache
 
 try:
-    from .sql_generator import get_table_info_sql, get_column_info_sql
+    from .sql_generator import get_table_info_sql, get_column_info_sql, get_table_size_sql, get_schema_size_sql
     from .executors.common import BaseExecutor
     from .utils import IndexItemFactory
 except ImportError:
-    from sql_generator import get_table_info_sql, get_column_info_sql
+    from sql_generator import get_table_info_sql, get_column_info_sql, get_table_size_sql, get_schema_size_sql
     from executors.common import BaseExecutor
     from utils import IndexItemFactory
 
@@ -33,9 +33,18 @@ def get_table_context(origin_table, executor: BaseExecutor):
     else:
         table = origin_table
         schemas = executor.get_schema()
+    # 获取指定模式下的所有表大小
     for _schema in schemas.split(','):
         table_info_sqls = [get_table_info_sql(table, _schema)]
         column_info_sqls = [get_column_info_sql(table, _schema)]
+        schema_size_sql = [get_schema_size_sql(_schema)]
+        table_size_sql = [get_table_size_sql(table)]
+
+        _, total_storage_size = executor.execute_sqls(schema_size_sql)
+        _, table_storage_size = executor.execute_sqls(table_size_sql)
+
+        size_weight = int(table_storage_size[0]) / int(total_storage_size[0]) if int(total_storage_size[0]) > 0 else 0
+
         for _tuple in executor.execute_sqls(table_info_sqls):
             if len(_tuple) == 2:
                 reltuples, parttype = _tuple
@@ -52,7 +61,7 @@ def get_table_context(origin_table, executor: BaseExecutor):
             if column not in columns:
                 columns.append(column)
                 n_distincts.append(float(n_distinct))
-        table_context = TableContext(_schema, table, int(reltuples), columns, n_distincts, is_partitioned_table)
+        table_context = TableContext(_schema, table, int(reltuples), size_weight, columns, n_distincts, is_partitioned_table)
         return table_context
 
 
@@ -61,6 +70,7 @@ class TableContext:
     schema: str
     table: str
     reltuples: int
+    size_weight: int
     columns: List = field(default_factory=lambda: [])
     n_distincts: List = field(default_factory=lambda: [])
     is_partitioned_table: bool = field(default=False)

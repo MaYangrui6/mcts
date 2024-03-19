@@ -25,6 +25,8 @@ import sqlparse
 from sqlparse.tokens import Name
 from sqlparse.sql import Function, Parenthesis, IdentifierList
 
+from HyperQO.sql_feature.bag_of_predicates import BagOfPredicates
+from HyperQO.sql_feature.utils import build_similarity_index, embed_queries_and_plans
 
 COLUMN_DELIMITER = ', '
 QUERY_PLAN_SUFFIX = 'QUERY PLAN'
@@ -314,28 +316,42 @@ class QueryItem:
 
 
 class WorkLoad:
-    def __init__(self, queries: List[QueryItem]):
+    def __init__(self, queries: List[QueryItem], plans: List[str]):
         self.__indexes_list = []
         self.__queries = queries
+        self.__tables = set()
         self.__index_names_list = [[] for _ in range(len(self.__queries))]
         self.__indexes_costs = [[] for _ in range(len(self.__queries))]
+        self.__plans = plans
         self.__plan_list = [[] for _ in range(len(self.__queries))]
         self.__query_improvement = []
         self.__query_index_cost_cache = {}
         self.__origin_cost = 0
-        self.__queries_origin_cost= []
+        self.__queries_origin_cost = []
+        self.__sim_index = None
+        self.__dictionary = None
 
     def get_query_index_cost_cache(self):
         return self.__query_index_cost_cache
 
-    def get_m_largest_sum_with_indices(self,threshold=0.8):
+    def set_workload_similarity_with_predicate_feature(self, sql_embedder):
+        queries = [self.__queries[i].get_statement() for i in range(len(self.__queries))]
+        workload_embeddings, workload_predicates, self.__dictionary = embed_queries_and_plans(sql_embedder, queries, self.__plans)
+        self.__sim_index = build_similarity_index(sql_embedder.model, workload_embeddings, workload_predicates, self.__dictionary)
+
+    def get_similarity_with_predicate(self, plan):
+        sim = self.__sim_index[self.__dictionary.doc2bow(
+            BagOfPredicates().extract_predicates_from_plan(plan["Plan"]))]
+        return sim
+
+    def get_m_largest_sum_with_indices(self, threshold=0.8):
         nums_with_indices = list(enumerate(self.get_query_improvement()))  # 列表中每个数和其对应的索引
         nums_with_indices_sorted = sorted(nums_with_indices, key=lambda x: x[1], reverse=True)  # 按数值降序排序
-        half_max_indices_num =len(nums_with_indices)//5
+        half_max_indices_num = len(nums_with_indices) // 5
         half_max_indices = [x[0] for x in nums_with_indices_sorted[:half_max_indices_num]]
-        print('nums_with_indices :',nums_with_indices_sorted)
+        print('nums_with_indices :', nums_with_indices_sorted)
         total_sum = sum(num for _, num in nums_with_indices_sorted)  # 计算列表中所有数的总和
-        print('total_sum :',total_sum)
+        print('total_sum :', total_sum)
         target_sum = total_sum * threshold  # 计算80%阈值的目标和
         current_sum = 0
         m = 0
@@ -348,11 +364,11 @@ class WorkLoad:
             indices.append(index)
             if current_sum >= target_sum:
                 break
-        #至少返回1/4的query
+        # 至少返回1/4的query
         if m > half_max_indices_num:
             return m, indices
         else:
-            return half_max_indices_num,half_max_indices
+            return half_max_indices_num, half_max_indices
 
     def set_workload_origin_cost(self,executor):
         from index_advisor_workload import calculate_cost
@@ -400,6 +416,9 @@ class WorkLoad:
     def get_queries(self) -> List[QueryItem]:
         return self.__queries
 
+    def get_plans(self) -> List[str]:
+        return self.__plans
+
     def has_indexes(self, indexes: Tuple[AdvisedIndex]):
         return indexes in self.__indexes_list
 
@@ -430,6 +449,12 @@ class WorkLoad:
         for indexes in self.__indexes_list:
             if indexes and len(indexes) == 1:
                 indexes[0].benefit = self.get_index_benefit(indexes[0])
+
+    def add_table(self, table_context):
+        self.__tables.add(table_context)
+
+    def get_tables(self):
+        return self.__tables
 
     def replace_indexes(self, origin, new):
         if not new:

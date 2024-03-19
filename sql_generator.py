@@ -102,8 +102,8 @@ def get_hypo_index_head_sqls(is_multi_node):
 
 
 def get_index_check_sqls(query, indexes, is_multi_node):
-    hypopg_btree=dict()
-    hypopg_btree_table=dict()
+    hypopg_btree = dict()
+    hypopg_btree_table = dict()
     sqls = get_hypo_index_head_sqls(is_multi_node)[:]
     if indexes:
         for index in indexes:
@@ -125,7 +125,7 @@ def get_index_check_sqls(query, indexes, is_multi_node):
     # sqls.append("SET explain_perf_mode = 'normal';")
     sqls.extend(get_prepare_sqls(query))
     sqls.append('SELECT hypopg_reset_index()')
-    return sqls,hypopg_btree,hypopg_btree_table
+    return sqls, hypopg_btree, hypopg_btree_table
 
 
 def get_table_info_sql(table, schema):
@@ -136,3 +136,15 @@ def get_table_info_sql(table, schema):
 def get_column_info_sql(table, schema):
     return f"select n_distinct, attname from pg_stats where tablename ilike '{table}' " \
            f"and schemaname = '{schema}';"
+
+
+def get_schema_size_sql(schema):
+    return f"""
+            SELECT SUM(pg_total_relation_size(quote_ident(table_name)))
+            FROM information_schema.tables
+            WHERE table_schema = '{schema}';
+        """
+
+
+def get_table_size_sql(table):
+    return f"""SELECT pg_total_relation_size(quote_ident('{table}')) AS total_storage_size;"""

@@ -2,4 +2,5 @@
 .idea
 *.xml
 executors/.ipynb_checkpoints
+executors/__pycache__
 __pycache__

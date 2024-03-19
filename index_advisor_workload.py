@@ -21,6 +21,7 @@ import re
 import sys
 import select
 import logging
+import time
 from logging.handlers import RotatingFileHandler
 from collections import defaultdict
 from functools import lru_cache
@@ -32,16 +33,18 @@ from multiprocessing import Pool
 import sqlparse
 from sql_metadata import Parser
 import itertools
-sys.path.append('/home/ubuntu/project/mayang/mcts/AutoIndex_test')
+
+sys.path.append('/home/ubuntu/project/project/mcts')
+
 try:
     from .sql_output_parser import parse_single_advisor_results, parse_explain_plan, \
         get_checked_indexes, parse_table_sql_results, parse_existing_indexes_results, parse_plan_cost, parse_hypo_index
     from .sql_generator import get_single_advisor_sql, get_index_check_sqls, get_existing_index_sql, \
-    get_workload_cost_sqls, get_index_setting_sqls, get_prepare_sqls, get_hypo_index_head_sqls
+        get_workload_cost_sqls, get_index_setting_sqls, get_prepare_sqls, get_hypo_index_head_sqls
     from .executors.common import BaseExecutor
     from .executors.gsql_executor import GsqlExecutor
     from .mcts import MCTS
-    from .table import get_table_context
+    from .table import get_table_context, TableContext
     from .utils import match_table_name, IndexItemFactory, \
         AdvisedIndex, ExistingIndex, QueryItem, WorkLoad, QueryType, IndexType, COLUMN_DELIMITER, \
         lookfor_subsets_configs, has_dollar_placeholder, generate_placeholder_indexes, \
@@ -77,6 +80,7 @@ from HyperQO.TreeLSTM import SPINN
 from HyperQO.PGUtils import pgrunner
 import pandas as pd
 from HyperQO.sql_feature.workload_embedder import PredicateEmbedderDoc2Vec
+
 config = Config()
 random.seed(0)
 
@@ -85,27 +89,27 @@ queries = train['query'].values
 plans_json = train["plan_json"].values
 
 tree_builder = TreeBuilder()
-    # 这里的 input_size 必须为偶数！
 value_network = SPINN(head_num=config.head_num, input_size=36, hidden_size=config.hidden_size, table_num=50,
-                          sql_size=config.sql_size, attention_dim=30).to(config.device)
+                      sql_size=config.sql_size, attention_dim=30).to(config.device)
 
-value_network.load_state_dict((torch.load( '/home/ubuntu/project/LSTM+Attention/information/model_value_network.pth')))
+value_network.load_state_dict((torch.load('/home/ubuntu/project/LSTM+Attention/information/model_value_network.pth')))
 treenet_model = TreeNet(tree_builder, value_network)
 
-workload_embedder_path = os.path.join("/home/ubuntu/project/LSTM+Attention/information/tmp", "embedder.pth")
-workload_embedder = PredicateEmbedderDoc2Vec(queries[:], plans_json, 20, database_runner=pgrunner, file_name=workload_embedder_path)
+sql_embedder_path = os.path.join("/home/ubuntu/project/LSTM+Attention/information/tmp", "embedder.pth")
+sql_embedder = PredicateEmbedderDoc2Vec(queries[:], plans_json, 20, database_runner=pgrunner,
+                                        file_name=sql_embedder_path)
+
+
 def get_query_improvement_from_model1(sql):
     plan_json = pgrunner.getCostPlanJson(sql)
-    sql_vec = workload_embedder.get_embedding([sql])
+    sql_vec = sql_embedder.get_embedding([sql])
     # 计算损失
     loss, pred_val = treenet_model.train(plan_json, sql_vec, torch.tensor(0), is_train=False)
     return pred_val.item()
 
 
-
-
 SAMPLE_NUM = 5
-MAX_INDEX_COLUMN_NUM = 4
+MAX_INDEX_COLUMN_NUM = 2
 MAX_CANDIDATE_COLUMNS = 40
 MAX_INDEX_NUM = None
 MAX_INDEX_STORAGE = None
@@ -197,7 +201,7 @@ def is_valid_statement(conn, statement):
     for _tuple in res:
         if isinstance(_tuple[0], str) and \
                 (_tuple[0].upper().startswith(ERROR_KEYWORD) or f' {ERROR_KEYWORD}: ' in _tuple[0].upper()):
-            logging.info('_tuple :%s',_tuple)
+            logging.info('_tuple :%s', _tuple)
             return False
     return True
 
@@ -704,8 +708,6 @@ def add_more_column_index(indexes, table, columns_info, single_col_info,dict={})
                                                              columns_index_type)
         if current_columns_index in indexes:
             return
-        # 对index对应的query_improvement字典的合并
-        if dict: current_columns_index.set_query_pos(dict)
         # To make sure global is behind local
         if single_index_type == 'local':
             global_columns_index = IndexItemFactory().get_index(table, columns + COLUMN_DELIMITER + single_column,
@@ -1277,6 +1279,54 @@ def get_last_indexes_result(input_path):
     return integrate_indexes
 
 
+def get_indexable_columns(parser):
+    columns = []
+    for position, _columns in parser.columns_dict.items():
+        if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
+            columns.extend(_columns)
+    flatten_columns = UniqueList()
+    for column in flatten(columns):
+        flatten_columns.append(column)
+    return flatten_columns
+
+
+def get_query_similarity_with_indexable_columns(workload: WorkLoad, query1: str, query2: str):
+    query1_indexable_columns = get_indexable_columns(Parser(query1))
+    query2_indexable_columns = get_indexable_columns(Parser(query2))
+
+    query_weights = defaultdict(dict)
+
+    # 计算 query1 的权重
+    for column in query1_indexable_columns:
+        for table in workload.get_tables():
+            if column not in table.columns:
+                continue
+            query_weights[query1][column] = (1 - table.get_n_distinct(column)) * table.size_weight
+
+    # 添加 query2 中不存在于 query1 的索引列，并将权重设置为0
+    for column in query2_indexable_columns:
+        if column not in query1_indexable_columns:
+            query_weights[query1][column] = 0
+
+    # 计算 query2 的权重
+    for column in query2_indexable_columns:
+        for table in workload.get_tables():
+            if column not in table.columns:
+                continue
+            query_weights[query2][column] = (1 - table.get_n_distinct(column)) * table.size_weight
+
+    # 添加 query1 中不存在于 query2 的索引列，并将权重设置为0
+    for column in query1_indexable_columns:
+        if column not in query2_indexable_columns:
+            query_weights[query2][column] = 0
+
+    intersection = sum(min(query_weights[query1][col], query_weights[query2][col]) for col in
+                       set(query_weights[query1]) & set(query_weights[query2]))
+    union = sum(max(query_weights[query1][col], query_weights[query2][col]) for col in
+                set(query_weights[query1]) & set(query_weights[query2]))
+    return intersection / union if union > 0 else 0
+
+
 def recalculate_cost_for_opt_indexes(workload: WorkLoad, indexes: Tuple[AdvisedIndex]):
     """After the recommended indexes are all built, calculate the gain of each index."""
     all_used_index_names = workload.get_workload_used_indexes(indexes)
@@ -1318,7 +1368,6 @@ def _add_merged_indexes(candidate_indexes):
             dict3.update(dict2)
             add_more_column_index(candidate_indexes,table,(cols,index_type),(single_col,index_type),dict3)
 
-
     return candidate_indexes
 
 
@@ -1328,8 +1377,9 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
     queries = compress_workload(workload_file_path)
     queries = [query for query in queries if is_valid_statement(executor, query.get_statement())]
     queries_improvement = [get_query_improvement_from_model1(sql.get_statement()) for sql in queries]
+    plans = [pgrunner.getCostPlanJson(sql.get_statement()) for sql in queries]
 
-    workload = WorkLoad(queries)
+    workload = WorkLoad(queries, plans)
     workload.set_workload_origin_cost(executor)
     queries_origin_cost_list = [calculate_cost(executor,sql.get_statement(),[]) for sql in queries]
     workload.set_query_origin_cost(queries_origin_cost_list)
@@ -1448,7 +1498,7 @@ def main(argv):
                             default=MAX_CANDIDATE_COLUMNS)
     arg_parser.add_argument('--max-index-columns', type=int,
                             help='Maximum number of columns in a joint index',
-                            default=4)
+                            default=2)
     arg_parser.add_argument("--min-reltuples", type=int,
                             help="Minimum reltuples value for the index column.", default=10000)
     arg_parser.add_argument("--multi-node", "--multi_node", action='store_true',
@@ -1466,10 +1516,9 @@ def main(argv):
     set_logger()
     args.W = get_password()
     check_parameter(args)
-    # Initialize the connection.
-    import time
     start_time = time.time()
 
+    # Initialize the connection.
     if args.driver:
         try:
             import psycopg2
