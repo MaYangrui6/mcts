@@ -708,6 +708,7 @@ def add_more_column_index(indexes, table, columns_info, single_col_info,dict={})
                                                              columns_index_type)
         if current_columns_index in indexes:
             return
+        if dict: current_columns_index.set_query_pos(dict)
         # To make sure global is behind local
         if single_index_type == 'local':
             global_columns_index = IndexItemFactory().get_index(table, columns + COLUMN_DELIMITER + single_column,
