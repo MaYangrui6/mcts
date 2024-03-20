@@ -19,11 +19,10 @@ from typing import List, Tuple, Sequence, Any
 from contextlib import contextmanager
 import logging
 
-
-
 import sqlparse
 from sqlparse.tokens import Name
 from sqlparse.sql import Function, Parenthesis, IdentifierList
+from sql_metadata import Parser
 
 from HyperQO.sql_feature.bag_of_predicates import BagOfPredicates
 from HyperQO.sql_feature.utils import build_similarity_index, embed_queries_and_plans
@@ -146,27 +145,27 @@ class AdvisedIndex:
         self.__positive_queries = []
         self.__source_index = None
         self.__query_pos = {}
-        self.__index_improvement = None
+        self.__index_potential = None
 
-    def add_query_pos(self,pos,queries_improvement):
-        if pos not in self.__query_pos :
-            self.__query_pos[pos]=queries_improvement[pos]
+    def add_query_pos(self, pos, queries_potential):
+        if pos not in self.__query_pos:
+            self.__query_pos[pos] = queries_potential[pos]
 
-    def set_query_pos(self,query_pos):
+    def set_query_pos(self, query_pos):
         self.__query_pos = query_pos
 
-    def get_index_query_improvement_dict(self):
+    def get_index_query_potential_dict(self):
         return self.__query_pos
 
-    def get_index_improvement_average(self):
-        improvement=0
-        improvement_dict=self.get_index_query_improvement_dict()
-        for key,value in improvement_dict.items():
-            improvement+=value
-        return improvement/len(improvement_dict)
+    def get_index_potential_average(self):
+        potential = 0
+        potential_dict = self.get_index_query_potential_dict()
+        for key, value in potential_dict.items():
+            potential += value
+        return potential / len(potential_dict)
 
-    def set_index_improvement(self):
-        self.__index_improvement = self.get_index_improvement_average()
+    def set_index_potential(self):
+        self.__index_potential = self.get_index_potential_average()
 
     def set_source_index(self, source_index: ExistingIndex):
         self.__source_index = source_index
@@ -221,8 +220,8 @@ class AdvisedIndex:
         schema = self.get_schema()
         if schema == 'public':
             return index_name[1:-1].endswith(f'btree_{self.get_index_type() + "_" if self.get_index_type() else ""}'
-                                       f'{self.get_table().split(".")[-1]}_'
-                                       f'{"_".join(self.get_columns().split(COLUMN_DELIMITER))}')
+                                             f'{self.get_table().split(".")[-1]}_'
+                                             f'{"_".join(self.get_columns().split(COLUMN_DELIMITER))}')
         # else:
         #     return index_name.endswith(f'btree_{self.get_index_type() + "_" if self.get_index_type() else ""}'
         #                                f'{self.get_table().replace(".", "_")}_'
@@ -315,6 +314,17 @@ class QueryItem:
         return self.__str__()
 
 
+def get_indexable_columns(parser):
+    columns = []
+    for position, _columns in parser.columns_dict.items():
+        if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
+            columns.extend(_columns)
+    flatten_columns = UniqueList()
+    for column in flatten(columns):
+        flatten_columns.append(column)
+    return flatten_columns
+
+
 class WorkLoad:
     def __init__(self, queries: List[QueryItem], plans: List[str]):
         self.__indexes_list = []
@@ -324,28 +334,85 @@ class WorkLoad:
         self.__indexes_costs = [[] for _ in range(len(self.__queries))]
         self.__plans = plans
         self.__plan_list = [[] for _ in range(len(self.__queries))]
-        self.__query_improvement = []
+        self.__query_potential = []
         self.__query_index_cost_cache = {}
         self.__origin_cost = 0
         self.__queries_origin_cost = []
         self.__sim_index = None
         self.__dictionary = None
+        self.__query_to_benefit = defaultdict()
 
     def get_query_index_cost_cache(self):
         return self.__query_index_cost_cache
 
     def set_workload_similarity_with_predicate_feature(self, sql_embedder):
         queries = [self.__queries[i].get_statement() for i in range(len(self.__queries))]
-        workload_embeddings, workload_predicates, self.__dictionary = embed_queries_and_plans(sql_embedder, queries, self.__plans)
-        self.__sim_index = build_similarity_index(sql_embedder.model, workload_embeddings, workload_predicates, self.__dictionary)
+        workload_embeddings, workload_predicates, self.__dictionary = embed_queries_and_plans(sql_embedder, queries,
+                                                                                              self.__plans)
+        self.__sim_index = build_similarity_index(sql_embedder.model, workload_embeddings, workload_predicates,
+                                                  self.__dictionary)
 
     def get_similarity_with_predicate(self, plan):
         sim = self.__sim_index[self.__dictionary.doc2bow(
             BagOfPredicates().extract_predicates_from_plan(plan["Plan"]))]
         return sim
 
+    def get_similarity_with_indexable_column(self, query1: str, query2: str):
+        query1_indexable_columns = get_indexable_columns(Parser(query1))
+        query2_indexable_columns = get_indexable_columns(Parser(query2))
+
+        query_weights = defaultdict(dict)
+
+        # 计算 query1 的权重
+        for column in query1_indexable_columns:
+            for table in self.get_tables():
+                if column not in table.columns:
+                    continue
+                query_weights[query1][column] = (1 - table.get_n_distinct(column)) * table.size_weight
+
+        # 添加 query2 中不存在于 query1 的索引列，并将权重设置为0
+        for column in query2_indexable_columns:
+            if column not in query1_indexable_columns:
+                query_weights[query1][column] = 0
+
+        # 计算 query2 的权重
+        for column in query2_indexable_columns:
+            for table in self.get_tables():
+                if column not in table.columns:
+                    continue
+                query_weights[query2][column] = (1 - table.get_n_distinct(column)) * table.size_weight
+
+        # 添加 query1 中不存在于 query2 的索引列，并将权重设置为0
+        for column in query1_indexable_columns:
+            if column not in query2_indexable_columns:
+                query_weights[query2][column] = 0
+
+        intersection = sum(min(query_weights[query1][col], query_weights[query2][col]) for col in
+                           set(query_weights[query1]) & set(query_weights[query2]))
+        union = sum(max(query_weights[query1][col], query_weights[query2][col]) for col in
+                    set(query_weights[query1]) & set(query_weights[query2]))
+        return intersection / union if union > 0 else 0
+
+    def set_query_benefit(self):
+        for num, query in enumerate(self.__queries):
+            predicate_sims = self.get_similarity_with_predicate(self.__plans[num])
+            benefit_of_similar_queries = 0
+
+            for id, predicate_sim in predicate_sims:
+                if id != num:
+                    # 获取除自身之外相似的查询
+                    column_sim = self.get_similarity_with_indexable_column(self.__queries[id].get_statement(),
+                                                                           query.get_statement())
+                    propagation = (predicate_sim + column_sim) / 2
+                    benefit_of_similar_queries += propagation * self.__query_potential[id]
+
+            self.__query_to_benefit[num] = self.__query_potential[num] + benefit_of_similar_queries
+
+    def get_query_benefit(self) -> dict:
+        return self.__query_to_benefit
+
     def get_m_largest_sum_with_indices(self, threshold=0.8):
-        nums_with_indices = list(enumerate(self.get_query_improvement()))  # 列表中每个数和其对应的索引
+        nums_with_indices = list(enumerate(self.get_query_potential()))  # 列表中每个数和其对应的索引
         nums_with_indices_sorted = sorted(nums_with_indices, key=lambda x: x[1], reverse=True)  # 按数值降序排序
         half_max_indices_num = len(nums_with_indices) // 5
         half_max_indices = [x[0] for x in nums_with_indices_sorted[:half_max_indices_num]]
@@ -370,22 +437,21 @@ class WorkLoad:
         else:
             return half_max_indices_num, half_max_indices
 
-    def set_workload_origin_cost(self,executor):
+    def set_workload_origin_cost(self, executor):
         from index_advisor_workload import calculate_cost
         origin_cost = 0
         for sql in self.get_queries():
             origin_cost += calculate_cost(executor, sql.get_statement(), None)
-        self.__origin_cost=origin_cost
-
+        self.__origin_cost = origin_cost
 
     def get_workload_origin_cost(self):
         return self.__origin_cost
 
     def get_final_state_reward(self, executor, query_list, indexes):
         # 检查缓存中是否有已经计算过的成本和收益
-        indexes=sorted(indexes, key=lambda x: (x.get_table(), x.get_columns()))
-        query_cost_index=0
-        origin_cost=0
+        indexes = sorted(indexes, key=lambda x: (x.get_table(), x.get_columns()))
+        query_cost_index = 0
+        origin_cost = 0
         for query_num in query_list:
             cache_key = (query_num, tuple(indexes))
             if cache_key in self.__query_index_cost_cache:
@@ -398,20 +464,20 @@ class WorkLoad:
                 # 更新缓存
                 self.__query_index_cost_cache[cache_key] = cost_with_indexes
 
-            query_cost_index +=cost_with_indexes
+            query_cost_index += cost_with_indexes
         origin_cost = sum([self.__queries_origin_cost[x] for x in query_list])
 
-        return origin_cost-query_cost_index
+        return origin_cost - query_cost_index
 
-    def set_query_origin_cost(self,queries_cost_list):
-        self.__queries_origin_cost=queries_cost_list
+    def set_query_origin_cost(self, queries_cost_list):
+        self.__queries_origin_cost = queries_cost_list
 
-    def set_query_improvement(self,query_improvement):
-        for num in range(len(query_improvement)):
-            self.__query_improvement.append(query_improvement[num]*self.__queries_origin_cost[num])
+    def set_query_potential(self, query_potential):
+        for num in range(len(query_potential)):
+            self.__query_potential.append(query_potential[num] * self.__queries_origin_cost[num])
 
-    def get_query_improvement(self):
-        return self.__query_improvement
+    def get_query_potential(self):
+        return self.__query_potential
 
     def get_queries(self) -> List[QueryItem]:
         return self.__queries
@@ -496,7 +562,8 @@ class WorkLoad:
     @lru_cache(maxsize=None)
     def is_positive_query(self, index: AdvisedIndex, query: QueryItem):
         logging.info(f'index ：{index}，query :{query}')
-        logging.info(f'self.get_origin_cost_of_query(query ：{self.get_origin_cost_of_query(query)}，self.get_indexes_cost_of_query(query, tuple([index])) :{self.get_indexes_cost_of_query(query, tuple([index]))}')
+        logging.info(
+            f'self.get_origin_cost_of_query(query ：{self.get_origin_cost_of_query(query)}，self.get_indexes_cost_of_query(query, tuple([index])) :{self.get_indexes_cost_of_query(query, tuple([index]))}')
         return self.get_origin_cost_of_query(query) > self.get_indexes_cost_of_query(query, tuple([index]))
 
     def add_indexes(self, indexes: (Tuple[AdvisedIndex], None), costs, index_names, plan_list):
@@ -550,13 +617,13 @@ class WorkLoad:
             positive_queries = [query for query in insert_queries + delete_queries + update_queries + select_queries
                                 if query not in negative_queries + ineffective_queries]
         return insert_queries, delete_queries, update_queries, select_queries, \
-            positive_queries, ineffective_queries, negative_queries
+               positive_queries, ineffective_queries, negative_queries
 
     @lru_cache(maxsize=None)
     def get_index_sql_num(self, index: AdvisedIndex):
         insert_queries, delete_queries, update_queries, \
-            select_queries, positive_queries, ineffective_queries, \
-            negative_queries = self.get_index_related_queries(index)
+        select_queries, positive_queries, ineffective_queries, \
+        negative_queries = self.get_index_related_queries(index)
         insert_sql_num = sum(query.get_frequency() for query in insert_queries)
         delete_sql_num = sum(query.get_frequency() for query in delete_queries)
         update_sql_num = sum(query.get_frequency() for query in update_queries)
@@ -619,7 +686,7 @@ def infer_workload_benefit(workload: WorkLoad, config: List[AdvisedIndex],
                            atomic_config_total: List[Tuple[AdvisedIndex]]):
     """ Infer the most important queries for a config according to the model1 """
     total_benefit = 0
-    atomic_subsets_configs = lookfor_subsets_configs(config, atomic_config_total)   #查找给定配置中的子集---是否在原子配置列表中存在
+    atomic_subsets_configs = lookfor_subsets_configs(config, atomic_config_total)  # 查找给定配置中的子集---是否在原子配置列表中存在
     is_recorded = [True] * len(atomic_subsets_configs)
     for query in workload.get_queries():
         origin_cost_of_query = workload.get_origin_cost_of_query(query)
@@ -751,4 +818,3 @@ def flatten(iterable):
                 yield item
         else:
             yield _iter
-

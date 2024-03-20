@@ -35,12 +35,11 @@ WORKLOAD = None
 MAX_INDEX_NUM = 0
 CANDIDATE_SUBSET = defaultdict(list)
 CANDIDATE_SUBSET_BENEFIT = defaultdict(list)
-M_Largest_Query_List=[]
-
+M_Largest_Query_List = []
 
 from executors.driver_executor import DriverExecutor
-executor = DriverExecutor('tpcds', 'postgres', 'postgres', '127.0.0.1', '5432', 'public')
 
+executor = DriverExecutor('tpcds', 'postgres', 'postgres', '127.0.0.1', '5432', 'public')
 
 
 def find_best_benefit(choice):
@@ -109,7 +108,7 @@ class State(object):
         # The current node is a leaf node.
         return len(self.accumulation_choices) == MAX_INDEX_NUM
 
-    def select_index_by_value_probability(self,values):
+    def select_index_by_value_probability(self, values):
         # 计算总概率
         total = sum(values)
 
@@ -123,18 +122,18 @@ class State(object):
             if rand_num <= cumulative_sum:
                 return i
 
-    def get_choice_by_index_improvement(self,choices):
-        index_improvement=[index.get_index_improvement_average() for index in choices]
-        pos=self.select_index_by_value_probability(index_improvement)
+    def get_choice_by_index_benefit(self, choices):
+        index_potential = [index.get_index_potential_average() for index in choices]
+        pos = self.select_index_by_value_probability(index_potential)
         return choices[pos]
 
-    def select_choice_by_height(self,choice1, choice2, height,max_height):
+    def select_choice_by_height(self, choice1, choice2, height, max_height):
         # 计算选择1和选择2的概率
         # 高度越低，选择1的概率越大
         prob_choice1 = height
 
         # 生成一个0到1之间的随机数
-        rand_num = random.random()*max_height
+        rand_num = random.random() * max_height
 
         # 根据随机数和概率选择
         if rand_num < prob_choice1:
@@ -147,8 +146,9 @@ class State(object):
         if not self.available_choices:
             return None
         random_choice1 = random.choice([choice for choice in self.available_choices])
-        random_choice2 = self.get_choice_by_index_improvement([choice for choice in self.available_choices])
-        random_choice = self.select_choice_by_height(random_choice1,random_choice2,len(self.accumulation_choices),MAX_INDEX_NUM)
+        random_choice2 = self.get_choice_by_index_benefit([choice for choice in self.available_choices])
+        random_choice = self.select_choice_by_height(random_choice1, random_choice2, len(self.accumulation_choices),
+                                                     MAX_INDEX_NUM)
         self.available_choices.remove(random_choice)
         choice = copy.copy(self.accumulation_choices)
         choice.append(random_choice)
@@ -173,6 +173,7 @@ class State(object):
         return "reward: {}, storage :{}, choices: {}".format(
             self.current_benefit, self.current_storage, self.displayable_choices)
 
+
 class Node(object):
     """
     The Node of the Monte Carlo tree search tree contains the parent node and
@@ -180,6 +181,7 @@ class Node(object):
     which is used to calculate the traversal times and quality value of the UCB,
     and the State of the Node selected by the game.
     """
+
     def __init__(self):
         self.visit_number = 0
         self.quality = 0.0
@@ -234,7 +236,8 @@ class Node(object):
         return False if self.state.available_choices else True
 
     def is_all_expand_top_n(self):
-        return False if len(self.state.available_choices) > (len(AVAILABLE_CHOICES)-len(self.state.accumulation_choices))//2 else True
+        return False if len(self.state.available_choices) > (
+                    len(AVAILABLE_CHOICES) - len(self.state.accumulation_choices)) // 2 else True
 
     def __repr__(self):
         return "Node: {}, Q/N: {}/{}, State: {}".format(
@@ -258,7 +261,7 @@ def tree_policy(node):
     # Check if the current node is a leaf node.
     while node and not node.get_state().is_terminal():
 
-        if node.is_all_expand():
+        if node.is_all_expand_top_n():
             if not node.children:
                 return node
             node = best_child(node, True)
@@ -273,18 +276,20 @@ def tree_policy(node):
     # Return the leaf node.
     return node
 
-def get_important_query(WORKLOAD,indexes):
-    queries_involved =set()
-    improvement_list=WORKLOAD.get_query_improvement()
+
+def get_important_query(WORKLOAD, indexes):
+    queries_involved = set()
+    potential_list = WORKLOAD.get_query_potential()
     for index in indexes:
-        queries_involved= queries_involved | set(x for x in index.get_index_query_improvement_dict())
-    max_query=-1
-    max_improvement=-1
+        queries_involved = queries_involved | set(x for x in index.get_index_query_potential_dict())
+    max_query = -1
+    max_potential = -1
     for pos in queries_involved:
-        if improvement_list[pos]>max_improvement:
-            max_improvement=improvement_list[pos]
-            max_query=pos
-    return [query for query in WORKLOAD.get_queries()][max_query],max_query
+        if potential_list[pos] > max_potential:
+            max_potential = potential_list[pos]
+            max_query = pos
+    return [query for query in WORKLOAD.get_queries()][max_query], max_query
+
 
 def default_policy(node):
     """
@@ -309,16 +314,15 @@ def default_policy(node):
             break
         current_state = next_state
 
-
     # final_state_reward = current_state.get_current_benefit()
     # important_query ,pos =get_important_query(WORKLOAD,current_state.accumulation_choices)
     # query_list = [important_query]
     # query_list=[WORKLOAD.get_queries()[x] for x in M_Largest_Query_List]
-    final_state_reward = WORKLOAD.get_final_state_reward(executor,M_Largest_Query_List,current_state.accumulation_choices)
-    print('final_state_reward :',final_state_reward)
+    final_state_reward = WORKLOAD.get_final_state_reward(executor, M_Largest_Query_List,
+                                                         current_state.accumulation_choices)
+    print('final_state_reward :', final_state_reward)
     # print('calculate_cost reward query_pos :%s,index :%s,cost_reduction :%s'%(pos,current_state.accumulation_choices,final_state_reward))
     return final_state_reward
-
 
 
 def expand(node):
@@ -406,8 +410,8 @@ def monte_carlo_tree_search(node):
     """
 
     computation_budget = len(AVAILABLE_CHOICES) * STORAGE_THRESHOLD / TOTAL_STORAGE * 50
-    print('computation_budget :',computation_budget)
-    logging.info('ite_times monte_carlo_tree_search computation_budget :%s',computation_budget)
+    print('computation_budget :', computation_budget)
+    logging.info('ite_times monte_carlo_tree_search computation_budget :%s', computation_budget)
 
     # Run as much as possible under the computation budget.
     for i in range(int(computation_budget)):
@@ -428,12 +432,12 @@ def monte_carlo_tree_search(node):
 
 def MCTS(workload_info, atomic_choices, available_choices, storage_threshold, max_index_num):
     global ATOMIC_CHOICES, STORAGE_THRESHOLD, WORKLOAD, \
-        AVAILABLE_CHOICES, MAX_INDEX_NUM, TOTAL_STORAGE,M_Largest_Query_List
+        AVAILABLE_CHOICES, MAX_INDEX_NUM, TOTAL_STORAGE, M_Largest_Query_List
     WORKLOAD = workload_info
-    #设置improvement
+    # 设置 potential
     for index in available_choices:
-        index.set_index_improvement()
-    _,M_Largest_Query_List = WORKLOAD.get_m_largest_sum_with_indices()
+        index.set_index_potential()
+    _, M_Largest_Query_List = WORKLOAD.get_m_largest_sum_with_indices()
     AVAILABLE_CHOICES = available_choices
     ATOMIC_CHOICES = atomic_choices
     STORAGE_THRESHOLD = storage_threshold
@@ -452,9 +456,9 @@ def MCTS(workload_info, atomic_choices, available_choices, storage_threshold, ma
 
     opt_config = []
     # Set the rounds to play.
-    print('AVAILABLE_CHOICES :',AVAILABLE_CHOICES,len(AVAILABLE_CHOICES))
+    print('AVAILABLE_CHOICES :', AVAILABLE_CHOICES, len(AVAILABLE_CHOICES))
     for i in range(len(AVAILABLE_CHOICES)):
-        print('Round %d'%(i+1))
+        print('Round %d' % (i + 1))
         if current_node:
             current_node.reset_node()
             current_node.state.reset_state()
@@ -463,6 +467,6 @@ def MCTS(workload_info, atomic_choices, available_choices, storage_threshold, ma
                 opt_config = current_node.state.accumulation_choices
             else:
                 break
-        print('opt_config :',opt_config,len(opt_config))
-    print('what-if call times in MCTS :',len(WORKLOAD.get_query_index_cost_cache()))
+        print('opt_config :', opt_config, len(opt_config))
+    print('what-if call times in MCTS :', len(WORKLOAD.get_query_index_cost_cache()))
     return opt_config
