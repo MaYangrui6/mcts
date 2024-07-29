@@ -77,18 +77,19 @@ except ImportError:
 config = Config()
 random.seed(0)
 
-train = pd.read_csv('/home/ubuntu/project/LSTM+Attention/information/train.csv', index_col=0)
+train = pd.read_csv('/home/ubuntu/project/mcts/HyperQO/information/train.csv', index_col=0)
+plan = pd.read_csv('/home/ubuntu/project/mcts/HyperQO/information/query_plans.csv')
 queries = train['query'].values
-plans_json = train["plan_json"].values
+plans_json = plan["plan"].values
 
 tree_builder = TreeBuilder()
 value_network = SPINN(head_num=config.head_num, input_size=36, hidden_size=config.hidden_size, table_num=50,
                       sql_size=config.sql_size, attention_dim=30).to(config.device)
 
-value_network.load_state_dict((torch.load('/home/ubuntu/project/LSTM+Attention/information/model_value_network.pth')))
+value_network.load_state_dict((torch.load('/home/ubuntu/project/mcts/HyperQO/models/2024-07-29_20-07-10/model_value_network.pth')))
 treenet_model = TreeNet(tree_builder, value_network)
 
-sql_embedder_path = os.path.join("/home/ubuntu/project/LSTM+Attention/information/tmp", "embedder.pth")
+sql_embedder_path = os.path.join("/home/ubuntu/project/mcts/HyperQO/information/", "embedder.pth")
 sql_embedder = PredicateEmbedderDoc2Vec(queries[:], plans_json, 20, database_runner=pgrunner,
                                         file_name=sql_embedder_path)
 
@@ -1322,7 +1323,10 @@ def index_advisor_workload(history_advise_indexes, executor: BaseExecutor, workl
                            use_all_columns: bool, **kwargs):
     queries = compress_workload(workload_file_path)
     queries = [query for query in queries if is_valid_statement(executor, query.get_statement())]
-    queries_potential_ratio = [get_query_potential_ratio_from_model1(sql.get_statement()) for sql in queries]
+    print('query number :',len(queries))
+    queries_potential_ratio = [0.6796836056371768, 0.915215021088601, 0.5363773955895892, 0.8982047074960456, 0.697946229834885, 0.9999927987644048, 0.3911084899092901, 0.32828230671906544, 0.8693647687502196, 0.961618496296227, 0.9316463829817883, 0.706991767192336, 0.6907378728775236, 0.9579208419139372, 0.4941199399485792, 0.12372722968358306, 0.9621813874948445, 0.934947289365008, 0.7289570448477475, 0.9398498542729594, 0.9927481370118234, 0.5000136193027793, 0.9997820067673766, 0.9947117902584579, 0.17994631319160959, 0.9408534333262217, 0.9999787295362985, 0.693955739723488, 0.4226511152280862, 0.9078160765166499, 0.9393264414571613, 0.6838783619519654, 0.861823789049504, 0.9573519351992412, 0.85768360085898, 0.5913628204528013, 0.39965337995166816, 0.9693063928317106, 0.5558501525282323, 0.973558669478285, 0.867261902558211, 0.5923346152047447, 0.3419203906450425, 0.3109011254612766, 0.3433849917632722, 0.8614613432102152, 0.6312136502544863, 0.251034381660094, 0.5171742263904571, 0.2659726257342873, 0.577681492483308, 0.994718761468775, 0.9877583260355965, 0.956074677549224, 0.8803298379075323, 0.17386351684534462, 0.693295610851269, 0.9617979848237385, 0.9827518239330074, 0.8331512722010552, 0.85734029362694, 0.36768262079271075, 0.26098465981420405, 0.3329484019197757, 0.6734728191300432][0]
+
+    # queries_potential_ratio = [get_query_potential_ratio_from_model1(sql.get_statement()) for sql in queries]
     plans = [pgrunner.getCostPlanJson(sql.get_statement()) for sql in queries]
 
     workload = WorkLoad(queries, plans)
@@ -1480,6 +1484,7 @@ def main(argv):
                 from .executors.driver_executor import DriverExecutor
             except ImportError:
                 from executors.driver_executor import DriverExecutor
+
             executor = DriverExecutor(args.database, args.db_user, args.W, args.db_host, args.db_port, args.schema)
         except ImportError:
             logging.warning('Python driver import failed, '

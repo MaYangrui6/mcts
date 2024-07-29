@@ -33,7 +33,7 @@ class DriverExecutor(BaseExecutor):
     def __init_conn_handle(self):
         self.conn = psycopg2.connect(dbname=self.dbname,
                                      user=self.user,
-                                     password=self.password,
+                                     password='password',
                                      host=self.host,
                                      port=self.port,
                                      application_name='DBMind-index-advisor')

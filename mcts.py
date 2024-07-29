@@ -39,7 +39,7 @@ M_Largest_Query_List = []
 
 from executors.driver_executor import DriverExecutor
 
-executor = DriverExecutor('tpcds', 'postgres', 'postgres', '127.0.0.1', '5432', 'public')
+executor = DriverExecutor('indexselection_tpcds___10', 'postgres', 'password', '127.0.0.1', '5432', 'public')
 
 
 def find_best_benefit(choice):
