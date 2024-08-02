@@ -23,6 +23,7 @@ import sqlparse
 from sqlparse.tokens import Name
 from sqlparse.sql import Function, Parenthesis, IdentifierList
 from sql_metadata import Parser
+import sqlparse
 
 from HyperQO.sql_feature.bag_of_predicates import BagOfPredicates
 from HyperQO.sql_feature.utils import build_similarity_index, embed_queries_and_plans
@@ -314,14 +315,28 @@ class QueryItem:
         return self.__str__()
 
 
+# def get_indexable_columns(parser):
+#     columns = []
+#     for position, _columns in parser.columns_dict.items():
+#         if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
+#             columns.extend(_columns)
+#     flatten_columns = UniqueList()
+#     for column in flatten(columns):
+#         flatten_columns.append(column)
+#     return flatten_columns
+
 def get_indexable_columns(parser):
     columns = []
-    for position, _columns in parser.columns_dict.items():
-        if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
-            columns.extend(_columns)
-    flatten_columns = UniqueList()
-    for column in flatten(columns):
-        flatten_columns.append(column)
+    try:
+        for position, _columns in parser.columns_dict.items():
+            if position.upper() not in ['SELECT', 'INSERT', 'UPDATE']:
+                columns.extend(_columns)
+        flatten_columns = UniqueList()
+        for column in flatten(columns):
+            flatten_columns.append(column)
+    except Exception as e:
+        print(f"Encountered an error while parsing columns: {e}")
+        return []
     return flatten_columns
 
 
@@ -341,6 +356,9 @@ class WorkLoad:
         self.__sim_index = None
         self.__dictionary = None
         self.__query_to_benefit = defaultdict()
+
+    def get_current_what_if_calls(self):
+        return len(self.__query_index_cost_cache)
 
     def get_query_index_cost_cache(self):
         return self.__query_index_cost_cache

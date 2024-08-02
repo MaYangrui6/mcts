@@ -39,7 +39,7 @@ M_Largest_Query_List = []
 
 from executors.driver_executor import DriverExecutor
 
-executor = DriverExecutor('indexselection_tpcds___10', 'postgres', 'password', '127.0.0.1', '5432', 'public')
+executor = DriverExecutor('imdbload', 'postgres', 'password', '127.0.0.1', '5432', 'public')
 
 
 def find_best_benefit(choice):
@@ -409,7 +409,8 @@ def monte_carlo_tree_search(node):
     and find the next optimal node.
     """
 
-    computation_budget = len(AVAILABLE_CHOICES) * STORAGE_THRESHOLD / TOTAL_STORAGE * 50
+    # computation_budget = len(AVAILABLE_CHOICES) * STORAGE_THRESHOLD / TOTAL_STORAGE * 50
+    computation_budget= 100
     print('computation_budget :', computation_budget)
     logging.info('ite_times monte_carlo_tree_search computation_budget :%s', computation_budget)
 

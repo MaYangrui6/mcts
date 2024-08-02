@@ -36023,3 +36023,49 @@ limit 100; frequency: 1.0 index_list: [table: catalog_sales columns: cs_sold_dat
  while executing SQL statement.
 2024-03-18 14:02:02,283 - root - __execute - WARNING - Found prepared statement "prepare_53" does not exist
  while executing SQL statement.
+2024-07-30 10:14:10,818 - root - generate_query_placeholder_indexes - WARNING - Found 'NoneType' object has no attribute 'normalized' while parsing SQL statement.
+2024-07-30 10:14:11,141 - root - generate_query_placeholder_indexes - WARNING - Found 'FROM' while parsing SQL statement.
+2024-07-30 15:52:24,550 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:52:24,551 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:53:11,643 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:53:11,643 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:54:09,703 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:54:09,703 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:57:13,599 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 15:57:13,600 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:08:58,104 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:08:58,105 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:08:58,179 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:08:58,179 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:13:30,561 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:13:30,562 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:13:30,642 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 16:13:30,642 - root - __execute - WARNING - Found prepared statement "prepare_11" does not exist
+ while executing SQL statement.
+2024-07-30 19:46:37,672 - root - __execute - WARNING - Found prepared statement "prepare_7" does not exist
+ while executing SQL statement.
+2024-07-30 19:46:37,673 - root - __execute - WARNING - Found prepared statement "prepare_7" does not exist
+ while executing SQL statement.
+2024-07-30 19:48:46,179 - root - __execute - WARNING - Found prepared statement "prepare_7" does not exist
+ while executing SQL statement.
+2024-07-30 19:48:46,180 - root - __execute - WARNING - Found prepared statement "prepare_7" does not exist
+ while executing SQL statement.
+2024-07-30 19:48:46,229 - root - __execute - WARNING - Found prepared statement "prepare_7" does not exist
+ while executing SQL statement.
+2024-07-30 19:48:46,230 - root - __execute - WARNING - Found prepared statement "prepare_7" does not exist
+ while executing SQL statement.
